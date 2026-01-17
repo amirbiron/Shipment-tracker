@@ -1,6 +1,7 @@
 """
-17TRACK API integration module
-Handles all interactions with the 17TRACK tracking API
+Tracking API integration module
+Supports both 17TRACK and TrackingMore APIs
+Handles carrier detection, tracking info retrieval, and status parsing
 """
 import logging
 import hashlib
@@ -25,24 +26,37 @@ class RateLimitError(TrackingAPIError):
 
 
 class TrackingAPI:
-    """17TRACK API client"""
+    """Multi-provider Tracking API client (17TRACK / TrackingMore)"""
     
     def __init__(self):
         config = get_config()
+        self.provider = config.tracking_api.provider
         self.api_key = config.tracking_api.api_key
         self.base_url = config.tracking_api.base_url
         self.client: Optional[httpx.AsyncClient] = None
     
     async def __aenter__(self):
         """Async context manager entry"""
+        headers = self._get_headers()
+        
         self.client = httpx.AsyncClient(
             timeout=30.0,
-            headers={
+            headers=headers
+        )
+        return self
+    
+    def _get_headers(self) -> Dict[str, str]:
+        """Get appropriate headers based on provider"""
+        if self.provider == 'trackingmore':
+            return {
+                "Tracking-Api-Key": self.api_key,
+                "Content-Type": "application/json"
+            }
+        else:  # 17track
+            return {
                 "17token": self.api_key,
                 "Content-Type": "application/json"
             }
-        )
-        return self
     
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit"""
@@ -54,19 +68,53 @@ class TrackingAPI:
         Detect possible carriers for a tracking number
         Returns list of carrier candidates
         """
-        # For 17TRACK, we can use the auto-detect feature
-        # This is a simplified version - in reality, 17TRACK auto-detects
+        logger.info(f"Detecting carrier for: {tracking_number} (provider: {self.provider})")
         
-        logger.info(f"Detecting carrier for: {tracking_number}")
+        if self.provider == 'trackingmore':
+            return await self._detect_carrier_trackingmore(tracking_number)
+        else:
+            return await self._detect_carrier_17track(tracking_number)
+    
+    async def _detect_carrier_trackingmore(self, tracking_number: str) -> List[CarrierCandidate]:
+        """TrackingMore carrier detection"""
+        if not self.client:
+            raise TrackingAPIError("API client not initialized")
         
-        # TODO: Implement actual carrier detection API call
-        # For now, we'll use a placeholder that returns common carriers
+        try:
+            # TrackingMore detect API
+            url = f"{self.base_url}/carriers/detect"
+            payload = {"tracking_number": tracking_number}
+            
+            response = await self.client.post(url, json=payload)
+            response.raise_for_status()
+            data = response.json()
+            
+            if data.get('code') == 200 and data.get('data'):
+                carriers_data = data['data']
+                candidates = []
+                
+                for carrier in carriers_data[:5]:  # Max 5
+                    candidates.append(CarrierCandidate(
+                        code=carrier.get('code', ''),
+                        name=carrier.get('name', '')
+                    ))
+                
+                return candidates if candidates else self._detect_carrier_by_pattern(tracking_number)
+            
+            # Fallback to pattern detection
+            return self._detect_carrier_by_pattern(tracking_number)
         
-        # Regex-based detection (fallback)
+        except httpx.HTTPError as e:
+            logger.warning(f"TrackingMore detect error: {e}, using pattern fallback")
+            return self._detect_carrier_by_pattern(tracking_number)
+    
+    async def _detect_carrier_17track(self, tracking_number: str) -> List[CarrierCandidate]:
+        """17TRACK carrier detection (pattern-based fallback)"""
+        # 17TRACK auto-detects, so we use pattern matching
         candidates = self._detect_carrier_by_pattern(tracking_number)
         
         if not candidates:
-            # If no pattern match, return generic international
+            # If no pattern match, return generic auto-detect
             candidates = [
                 CarrierCandidate(code="0", name="Auto Detect")
             ]
@@ -110,12 +158,46 @@ class TrackingAPI:
         tracking_number: str,
         carrier_code: str
     ) -> bool:
-        """
-        Register a tracking number with the API
-        """
+        """Register a tracking number with the API"""
         if not self.client:
             raise TrackingAPIError("API client not initialized")
         
+        if self.provider == 'trackingmore':
+            return await self._register_trackingmore(tracking_number, carrier_code)
+        else:
+            return await self._register_17track(tracking_number, carrier_code)
+    
+    async def _register_trackingmore(self, tracking_number: str, carrier_code: str) -> bool:
+        """TrackingMore registration"""
+        url = f"{self.base_url}/trackings/create"
+        
+        payload = {
+            "tracking_number": tracking_number,
+            "carrier_code": carrier_code
+        }
+        
+        try:
+            response = await self.client.post(url, json=payload)
+            
+            if response.status_code == 429:
+                raise RateLimitError("API rate limit exceeded")
+            
+            data = response.json()
+            
+            # TrackingMore returns 200/4031 for already exists
+            if data.get('code') in [200, 4031]:
+                logger.info(f"Registered tracking: {tracking_number}")
+                return True
+            else:
+                logger.warning(f"Registration response: {data}")
+                return True  # Still proceed
+        
+        except httpx.HTTPError as e:
+            logger.error(f"HTTP error during registration: {e}")
+            return True  # Proceed anyway, might work with get
+    
+    async def _register_17track(self, tracking_number: str, carrier_code: str) -> bool:
+        """17TRACK registration"""
         url = f"{self.base_url}/register"
         
         payload = [{
@@ -132,7 +214,6 @@ class TrackingAPI:
             response.raise_for_status()
             data = response.json()
             
-            # Check if registration was successful
             if data.get('code') == 0:
                 logger.info(f"Registered tracking: {tracking_number}")
                 return True
@@ -149,12 +230,54 @@ class TrackingAPI:
         tracking_number: str,
         carrier_code: str
     ) -> Optional[Dict[str, Any]]:
-        """
-        Get current tracking information for a shipment
-        """
+        """Get current tracking information for a shipment"""
         if not self.client:
             raise TrackingAPIError("API client not initialized")
         
+        if self.provider == 'trackingmore':
+            return await self._get_info_trackingmore(tracking_number, carrier_code)
+        else:
+            return await self._get_info_17track(tracking_number, carrier_code)
+    
+    async def _get_info_trackingmore(
+        self,
+        tracking_number: str,
+        carrier_code: str
+    ) -> Optional[Dict[str, Any]]:
+        """TrackingMore get tracking info"""
+        url = f"{self.base_url}/trackings/get"
+        
+        params = {
+            "tracking_numbers": tracking_number,
+            "carrier_code": carrier_code
+        }
+        
+        try:
+            response = await self.client.get(url, params=params)
+            
+            if response.status_code == 429:
+                raise RateLimitError("API rate limit exceeded")
+            
+            response.raise_for_status()
+            data = response.json()
+            
+            if data.get('code') == 200 and data.get('data'):
+                items = data['data']
+                if items and len(items) > 0:
+                    return items[0]
+            
+            return None
+        
+        except httpx.HTTPError as e:
+            logger.error(f"HTTP error getting tracking info: {e}")
+            raise TrackingAPIError(f"Failed to get tracking info: {e}")
+    
+    async def _get_info_17track(
+        self,
+        tracking_number: str,
+        carrier_code: str
+    ) -> Optional[Dict[str, Any]]:
+        """17TRACK get tracking info"""
         url = f"{self.base_url}/gettrackinfo"
         
         payload = [{
@@ -234,9 +357,60 @@ class TrackingAPI:
     
     def parse_tracking_response(self, response: Dict[str, Any]) -> Tuple[Optional[ShipmentEvent], str]:
         """
-        Parse 17TRACK API response to ShipmentEvent
+        Parse API response to ShipmentEvent
         Returns: (ShipmentEvent, event_hash)
         """
+        if self.provider == 'trackingmore':
+            return self._parse_trackingmore(response)
+        else:
+            return self._parse_17track(response)
+    
+    def _parse_trackingmore(self, response: Dict[str, Any]) -> Tuple[Optional[ShipmentEvent], str]:
+        """Parse TrackingMore response"""
+        # Get origin_info (tracking events)
+        events = response.get('origin_info', {}).get('trackinfo', [])
+        
+        if not events:
+            return None, ""
+        
+        # Latest event (first in list)
+        latest = events[0] if isinstance(events, list) else events
+        
+        # Parse event
+        status_raw = latest.get('StatusDescription', '') or latest.get('checkpoint_status', '')
+        location = latest.get('checkpoint_delivery_location', '') or latest.get('Details', '')
+        timestamp_str = latest.get('checkpoint_date', '') or latest.get('Date', '')
+        
+        # Parse timestamp
+        try:
+            # TrackingMore format: "2025-01-17 10:00:00" or ISO
+            if 'T' in timestamp_str:
+                timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+            else:
+                timestamp = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
+        except (ValueError, TypeError):
+            timestamp = datetime.utcnow()
+        
+        # Normalize status
+        status_code = response.get('status', '')
+        status_norm = self._normalize_status_trackingmore(status_raw, status_code)
+        
+        # Create event
+        event = ShipmentEvent(
+            status_raw=status_raw,
+            status_norm=status_norm,
+            timestamp=timestamp,
+            location=location,
+            raw=latest
+        )
+        
+        # Calculate hash
+        event_hash = self._calculate_event_hash(event)
+        
+        return event, event_hash
+    
+    def _parse_17track(self, response: Dict[str, Any]) -> Tuple[Optional[ShipmentEvent], str]:
+        """Parse 17TRACK response"""
         track_info = response.get('track', {})
         
         # Get latest event
@@ -272,10 +446,48 @@ class TrackingAPI:
             raw=latest
         )
         
-        # Calculate hash for change detection
+        # Calculate hash
         event_hash = self._calculate_event_hash(event)
         
         return event, event_hash
+    
+    def _normalize_status_trackingmore(self, status_raw: str, status_code: str) -> StatusNorm:
+        """Normalize TrackingMore status"""
+        status_lower = status_raw.lower()
+        
+        # TrackingMore status codes
+        status_map = {
+            'delivered': StatusNorm.DELIVERED,
+            'transit': StatusNorm.IN_TRANSIT,
+            'pickup': StatusNorm.OUT_FOR_DELIVERY,
+            'undelivered': StatusNorm.EXCEPTION,
+            'expired': StatusNorm.EXPIRED,
+            'notfound': StatusNorm.UNKNOWN,
+            'pending': StatusNorm.INFO_RECEIVED
+        }
+        
+        # Check status code first
+        if status_code in status_map:
+            return status_map[status_code]
+        
+        # Keyword-based fallback
+        if any(word in status_lower for word in ['delivered', 'נמסר']):
+            return StatusNorm.DELIVERED
+        elif any(word in status_lower for word in ['out for delivery', 'יצא לחלוקה']):
+            return StatusNorm.OUT_FOR_DELIVERY
+        elif any(word in status_lower for word in ['customs', 'מכס']):
+            return StatusNorm.CUSTOMS
+        elif any(word in status_lower for word in ['arrived', 'הגיע']):
+            if 'destination' in status_lower or 'יעד' in status_lower:
+                return StatusNorm.ARRIVED_DESTINATION
+            else:
+                return StatusNorm.ARRIVED_SORTING_CENTER
+        elif any(word in status_lower for word in ['in transit', 'בדרך', 'transit']):
+            return StatusNorm.IN_TRANSIT
+        elif any(word in status_lower for word in ['exception', 'חריגה', 'problem', 'בעיה', 'failed']):
+            return StatusNorm.EXCEPTION
+        
+        return StatusNorm.IN_TRANSIT  # Default
     
     def _normalize_status(self, status_raw: str, track_info: Dict) -> StatusNorm:
         """Normalize status text to StatusNorm enum"""

@@ -44,17 +44,34 @@ class MongoDBConfig:
 
 @dataclass
 class TrackingAPIConfig:
-    """17TRACK API configuration"""
+    """Tracking API configuration - supports 17TRACK and TrackingMore"""
+    provider: str  # "17track" or "trackingmore"
     api_key: str
-    base_url: str = "https://api.17track.net/track/v1"
+    base_url: str
     rate_limit: int = 3  # requests per second
     
     @classmethod
     def from_env(cls) -> 'TrackingAPIConfig':
-        api_key = os.getenv('TRACKING_API_KEY')
-        if not api_key:
-            raise ValueError("TRACKING_API_KEY not set in environment")
-        return cls(api_key=api_key)
+        # Determine provider (default: 17track)
+        provider = os.getenv('TRACKING_PROVIDER', '17track').lower()
+        
+        # Get API key
+        if provider == 'trackingmore':
+            api_key = os.getenv('TRACKINGMORE_API_KEY')
+            if not api_key:
+                raise ValueError("TRACKINGMORE_API_KEY not set in environment")
+            base_url = "https://api.trackingmore.com/v4"
+        else:  # 17track (default)
+            api_key = os.getenv('TRACKING_API_KEY') or os.getenv('SEVENTEENTRACK_API_KEY')
+            if not api_key:
+                raise ValueError("TRACKING_API_KEY or SEVENTEENTRACK_API_KEY not set in environment")
+            base_url = "https://api.17track.net/track/v1"
+        
+        return cls(
+            provider=provider,
+            api_key=api_key,
+            base_url=base_url
+        )
 
 
 @dataclass

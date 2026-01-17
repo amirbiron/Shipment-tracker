@@ -4,7 +4,8 @@
 
 ## ✨ תכונות עיקריות
 
-- 🌍 **תמיכה ב-3100+ חברות שילוח** דרך 17TRACK API
+- 🌍 **תמיכה ב-3100+ חברות שילוח** דרך 17TRACK או TrackingMore API
+- 🔄 **בחירת ספק API** - 17TRACK (חינמי: 100/יום) או TrackingMore (חינמי: 100/יום)
 - 🔍 **זיהוי אוטומטי** של חברת השילוח
 - 📲 **התראות בזמן אמת** על שינויי סטטוס
 - 🗄️ **ארכוב אוטומטי** של משלוחים שנמסרו
@@ -76,8 +77,14 @@ TELEGRAM_BOT_TOKEN=your_token_from_botfather
 # MongoDB
 MONGODB_URI=mongodb+srv://user:pass@cluster.mongodb.net/shipment_tracker
 
-# 17TRACK API
+# Tracking API - בחר ספק
+TRACKING_PROVIDER=17track  # או trackingmore
+
+# 17TRACK API (אם בחרת 17track)
 TRACKING_API_KEY=your_17track_api_key
+
+# TrackingMore API (אם בחרת trackingmore)
+TRACKINGMORE_API_KEY=your_trackingmore_api_key
 
 # Settings (אופציונלי)
 ENVIRONMENT=development
