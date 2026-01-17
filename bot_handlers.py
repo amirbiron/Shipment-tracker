@@ -1,0 +1,492 @@
+"""
+Telegram Bot Handlers
+All command and callback handlers for the bot
+"""
+import logging
+import re
+from datetime import datetime, timedelta
+from typing import Dict, Optional
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ContextTypes
+
+from models import Shipment, Subscription, ShipmentState, STATUS_TRANSLATIONS_HE
+from database import get_database
+from tracking_api import get_tracking_api, TrackingAPIError
+from config import get_config
+
+logger = logging.getLogger(__name__)
+
+# Rate limiting storage (user_id -> last_action_time)
+_rate_limits: Dict[str, datetime] = {}
+
+
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /start command"""
+    welcome_text = """
+🎉 <b>ברוך הבא לבוט מעקב משלוחים!</b>
+
+📦 הבוט מאפשר לך לעקוב אחר משלוחים מכל העולם ולקבל התראות אוטומטיות.
+
+<b>פקודות זמינות:</b>
+/add - הוסף משלוח חדש למעקב
+/list - הצג רשימת משלוחים פעילים
+/archive - הצג ארכיון משלוחים שנמסרו
+/refresh - רענן משלוח ידנית
+/mute - השתק/בטל השתקת התראות
+/remove - הסר משלוח מהמעקב
+/help - הצג הודעת עזרה
+
+<b>כיצד להתחיל?</b>
+פשוט שלח מספר מעקב או השתמש בפקודה /add
+"""
+    
+    await update.message.reply_text(
+        welcome_text,
+        parse_mode='HTML'
+    )
+
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /help command"""
+    help_text = """
+📖 <b>מדריך שימוש</b>
+
+<b>הוספת משלוח:</b>
+1. שלח מספר מעקב או /add [מספר] [שם]
+2. אם יש מספר חברות שילוח אפשריות, בחר מהרשימה
+3. קבל עדכון מיידי על הסטטוס
+
+<b>ניהול משלוחים:</b>
+• /list - צפה בכל המשלוחים הפעילים
+• /archive - צפה במשלוחים שנמסרו
+• /refresh - רענן סטטוס ידנית (עם הגבלת זמן)
+• /remove - הסר משלוח מהמעקב
+
+<b>התראות:</b>
+• תקבל התראה אוטומטית בכל שינוי סטטוס
+• השתמש ב-/mute להשתקת התראות למשלוח מסוים
+• משלוחים שנמסרו עוברים אוטומטית לארכיון
+
+<b>מגבלות:</b>
+• עד 30 משלוחים פעילים במקביל
+• רענון ידני: פעם ב-10 דקות
+• הוספה: 5 משלוחים לדקה
+
+יש בעיה? פנה לתמיכה או בדוק את /start
+"""
+    
+    await update.message.reply_text(
+        help_text,
+        parse_mode='HTML'
+    )
+
+
+async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Handle /add command
+    Format: /add [tracking_number] [item_name]
+    """
+    user_id = update.effective_user.id
+    
+    # Check rate limit
+    if not await _check_rate_limit(user_id, 'add', minutes=1, max_actions=5):
+        await update.message.reply_text(
+            "⚠️ יותר מדי בקשות. נסה שוב בעוד דקה.",
+            parse_mode='HTML'
+        )
+        return
+    
+    # Parse arguments
+    args = context.args
+    if not args:
+        await update.message.reply_text(
+            "❌ שימוש: /add [מספר_מעקב] [שם_פריט]\n"
+            "דוגמה: /add RR123456789CN אוזניות",
+            parse_mode='HTML'
+        )
+        return
+    
+    tracking_number = args[0].strip().upper()
+    item_name = " ".join(args[1:]) if len(args) > 1 else "משלוח"
+    
+    # Validate tracking number
+    if not _validate_tracking_number(tracking_number):
+        await update.message.reply_text(
+            "❌ מספר מעקב לא תקין. אנא בדוק ונסה שוב.",
+            parse_mode='HTML'
+        )
+        return
+    
+    # Check user's active shipments limit
+    db = await get_database()
+    active_count = await db.count_user_active_subscriptions(user_id)
+    config = get_config()
+    
+    if active_count >= config.app.max_active_shipments_per_user:
+        await update.message.reply_text(
+            f"⚠️ הגעת למגבלה של {config.app.max_active_shipments_per_user} משלוחים פעילים.\n"
+            "הסר משלוח קיים או המתן שמשלוח יימסר.",
+            parse_mode='HTML'
+        )
+        return
+    
+    # Detect carrier
+    status_msg = await update.message.reply_text(
+        "🔍 מזהה חברת שילוח...",
+        parse_mode='HTML'
+    )
+    
+    try:
+        async with await get_tracking_api() as api:
+            carriers = await api.detect_carrier(tracking_number)
+            
+            if not carriers:
+                await status_msg.edit_text(
+                    "❌ לא ניתן לזהות את חברת השילוח. אנא נסה שוב.",
+                    parse_mode='HTML'
+                )
+                return
+            
+            # If only one carrier, proceed automatically
+            if len(carriers) == 1:
+                await _finalize_add_shipment(
+                    update,
+                    context,
+                    tracking_number,
+                    item_name,
+                    carriers[0].code,
+                    status_msg
+                )
+            else:
+                # Multiple carriers - show selection
+                await _show_carrier_selection(
+                    update,
+                    context,
+                    tracking_number,
+                    item_name,
+                    carriers,
+                    status_msg
+                )
+    
+    except TrackingAPIError as e:
+        logger.error(f"API error in add_command: {e}")
+        await status_msg.edit_text(
+            "❌ שגיאה בתקשורת עם שרת המעקב. נסה שוב מאוחר יותר.",
+            parse_mode='HTML'
+        )
+
+
+async def _show_carrier_selection(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    tracking_number: str,
+    item_name: str,
+    carriers: list,
+    status_msg
+):
+    """Show inline keyboard for carrier selection"""
+    # Build keyboard
+    keyboard = []
+    for carrier in carriers[:5]:  # Max 5 options
+        keyboard.append([
+            InlineKeyboardButton(
+                carrier.name,
+                callback_data=f"select_carrier:{tracking_number}:{carrier.code}:{item_name}"
+            )
+        ])
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await status_msg.edit_text(
+        f"📋 נמצאו מספר חברות שילוח אפשריות עבור <code>{tracking_number}</code>\n\n"
+        "אנא בחר את חברת השילוח הנכונה:",
+        reply_markup=reply_markup,
+        parse_mode='HTML'
+    )
+
+
+async def carrier_selection_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle carrier selection from inline keyboard"""
+    query = update.callback_query
+    await query.answer()
+    
+    # Parse callback data
+    data_parts = query.data.split(':', 3)
+    if len(data_parts) != 4:
+        await query.edit_message_text("❌ שגיאה בעיבוד הבחירה.")
+        return
+    
+    _, tracking_number, carrier_code, item_name = data_parts
+    
+    await _finalize_add_shipment(
+        update,
+        context,
+        tracking_number,
+        item_name,
+        carrier_code,
+        query.message
+    )
+
+
+async def _finalize_add_shipment(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    tracking_number: str,
+    item_name: str,
+    carrier_code: str,
+    status_msg
+):
+    """Finalize adding shipment after carrier is determined"""
+    user_id = update.effective_user.id
+    db = await get_database()
+    
+    try:
+        await status_msg.edit_text(
+            "📡 מתחבר לשרת המעקב...",
+            parse_mode='HTML'
+        )
+        
+        async with await get_tracking_api() as api:
+            # Register with tracking API
+            await api.register_tracking(tracking_number, carrier_code)
+            
+            # Get initial status
+            tracking_data = await api.get_tracking_info(tracking_number, carrier_code)
+            
+            # Create or get shipment
+            existing = await db.get_shipment_by_tracking(tracking_number, carrier_code)
+            
+            if existing:
+                shipment = existing
+            else:
+                # Create new shipment
+                event, event_hash = api.parse_tracking_response(tracking_data) if tracking_data else (None, "")
+                
+                shipment = Shipment(
+                    tracking_number=tracking_number,
+                    carrier_code=carrier_code,
+                    last_event=event,
+                    last_event_hash=event_hash,
+                    last_check_at=datetime.utcnow(),
+                    next_check_at=datetime.utcnow() + timedelta(hours=2)
+                )
+                
+                shipment.id = await db.create_shipment(shipment)
+            
+            # Create subscription
+            subscription = Subscription(
+                user_id=user_id,
+                shipment_id=shipment.id,
+                item_name=item_name
+            )
+            
+            await db.create_subscription(subscription)
+            
+            # Build success message
+            success_text = [
+                "✅ <b>המעקב הופעל בהצלחה!</b>",
+                "",
+                f"📦 <b>{item_name}</b>",
+                f"מספר מעקב: <code>{tracking_number}</code>",
+            ]
+            
+            if shipment.last_event:
+                success_text.extend([
+                    "",
+                    "<b>סטטוס נוכחי:</b>",
+                    f"• {STATUS_TRANSLATIONS_HE.get(shipment.last_event.status_norm, 'לא ידוע')}",
+                ])
+                
+                if shipment.last_event.location:
+                    success_text.append(f"• מיקום: {shipment.last_event.location}")
+            
+            success_text.append("\n🔔 תקבל עדכונים אוטומטיים בכל שינוי סטטוס.")
+            
+            await status_msg.edit_text(
+                "\n".join(success_text),
+                parse_mode='HTML'
+            )
+    
+    except Exception as e:
+        logger.error(f"Error finalizing shipment: {e}", exc_info=True)
+        await status_msg.edit_text(
+            "❌ שגיאה בהוספת המשלוח. נסה שוב מאוחר יותר.",
+            parse_mode='HTML'
+        )
+
+
+async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /list command - show active shipments"""
+    user_id = update.effective_user.id
+    db = await get_database()
+    
+    # Get active subscriptions
+    subscriptions = await db.get_user_subscriptions(
+        user_id,
+        state=ShipmentState.ACTIVE
+    )
+    
+    if not subscriptions:
+        await update.message.reply_text(
+            "📭 אין לך משלוחים פעילים כרגע.\n\n"
+            "השתמש ב-/add כדי להוסיף משלוח חדש.",
+            parse_mode='HTML'
+        )
+        return
+    
+    # Build message
+    lines = [
+        f"📦 <b>המשלוחים הפעילים שלך ({len(subscriptions)}):</b>",
+        ""
+    ]
+    
+    for subscription, shipment in subscriptions:
+        lines.append(f"• <b>{subscription.item_name}</b>")
+        lines.append(f"  מספר: <code>{shipment.tracking_number}</code>")
+        
+        if shipment.last_event:
+            status = STATUS_TRANSLATIONS_HE.get(shipment.last_event.status_norm, 'לא ידוע')
+            lines.append(f"  סטטוס: {status}")
+            
+            if shipment.last_check_at:
+                time_ago = _format_time_ago(shipment.last_check_at)
+                lines.append(f"  עדכון אחרון: {time_ago}")
+        
+        mute_status = "🔕 מושתק" if subscription.muted else ""
+        if mute_status:
+            lines.append(f"  {mute_status}")
+        
+        lines.append("")
+    
+    lines.append("💡 השתמש ב-/refresh לרענון ידני")
+    lines.append("או ב-/remove להסרת משלוח")
+    
+    await update.message.reply_text(
+        "\n".join(lines),
+        parse_mode='HTML'
+    )
+
+
+async def archive_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /archive command - show delivered shipments"""
+    user_id = update.effective_user.id
+    db = await get_database()
+    
+    # Get archived subscriptions
+    subscriptions = await db.get_user_subscriptions(
+        user_id,
+        state=ShipmentState.ARCHIVED
+    )
+    
+    if not subscriptions:
+        await update.message.reply_text(
+            "📪 אין משלוחים בארכיון.\n\n"
+            "משלוחים שנמסרו יופיעו כאן.",
+            parse_mode='HTML'
+        )
+        return
+    
+    # Build message with inline keyboard for actions
+    lines = [
+        f"📫 <b>ארכיון משלוחים ({len(subscriptions)}):</b>",
+        ""
+    ]
+    
+    keyboard = []
+    
+    for subscription, shipment in subscriptions:
+        lines.append(f"✅ <b>{subscription.item_name}</b>")
+        lines.append(f"   <code>{shipment.tracking_number}</code>")
+        
+        if shipment.delivered_at:
+            date_str = shipment.delivered_at.strftime("%d/%m/%Y")
+            lines.append(f"   נמסר ב-{date_str}")
+        
+        lines.append("")
+        
+        # Add restore button
+        keyboard.append([
+            InlineKeyboardButton(
+                f"🔄 החזר למעקב: {subscription.item_name}",
+                callback_data=f"restore:{shipment.id}"
+            )
+        ])
+    
+    reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+    
+    await update.message.reply_text(
+        "\n".join(lines),
+        reply_markup=reply_markup,
+        parse_mode='HTML'
+    )
+
+
+async def restore_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle restore shipment callback"""
+    query = update.callback_query
+    await query.answer()
+    
+    shipment_id_str = query.data.split(':', 1)[1]
+    shipment_id = ObjectId(shipment_id_str)
+    
+    db = await get_database()
+    await db.reactivate_shipment(shipment_id)
+    
+    await query.edit_message_text(
+        "✅ המשלוח הוחזר למעקב פעיל!",
+        parse_mode='HTML'
+    )
+
+
+def _validate_tracking_number(tracking_number: str) -> bool:
+    """Validate tracking number format"""
+    # Basic validation
+    if len(tracking_number) < 5 or len(tracking_number) > 30:
+        return False
+    
+    # Should contain alphanumeric
+    if not re.match(r'^[A-Z0-9]+$', tracking_number):
+        return False
+    
+    return True
+
+
+def _format_time_ago(dt: datetime) -> str:
+    """Format datetime as 'X time ago' in Hebrew"""
+    now = datetime.utcnow()
+    diff = now - dt
+    
+    if diff.total_seconds() < 60:
+        return "עכשיו"
+    elif diff.total_seconds() < 3600:
+        minutes = int(diff.total_seconds() / 60)
+        return f"לפני {minutes} דקות"
+    elif diff.total_seconds() < 86400:
+        hours = int(diff.total_seconds() / 3600)
+        return f"לפני {hours} שעות"
+    else:
+        days = int(diff.total_seconds() / 86400)
+        return f"לפני {days} ימים"
+
+
+async def _check_rate_limit(
+    user_id: int,
+    action: str,
+    minutes: int,
+    max_actions: int
+) -> bool:
+    """
+    Check if user is within rate limit
+    Returns True if allowed, False if rate limited
+    """
+    key = f"{user_id}:{action}"
+    now = datetime.utcnow()
+    
+    if key in _rate_limits:
+        last_time = _rate_limits[key]
+        if now - last_time < timedelta(minutes=minutes):
+            # Still in cooldown
+            return False
+    
+    _rate_limits[key] = now
+    return True
