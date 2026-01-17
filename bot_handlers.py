@@ -389,12 +389,15 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Add shipment info to message
         mute_icon = " 🔕" if subscription.muted else ""
         lines.append(f"<b>{i+1}. {subscription.item_name}</b>{mute_icon}")
+        lines.append(f"    🔢 <code>{shipment.tracking_number}</code>")
         
         if shipment.last_event:
             status = STATUS_TRANSLATIONS_HE.get(shipment.last_event.status_norm, 'לא ידוע')
             lines.append(f"    📍 {status}")
+            if shipment.last_event.location:
+                lines.append(f"    📌 {shipment.last_event.location}")
         else:
-            lines.append(f"    📍 ממתין לעדכון")
+            lines.append(f"    ⚠️ לחץ על רענן לקבלת סטטוס")
         
         lines.append("")
         
@@ -408,6 +411,10 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Action buttons row
         keyboard.append([
+            InlineKeyboardButton(
+                "🔄",
+                callback_data=f"refresh:{shipment.id}"
+            ),
             InlineKeyboardButton(
                 "✏️ ערוך",
                 callback_data=f"edit_name:{user_id}:{shipment.id}"
