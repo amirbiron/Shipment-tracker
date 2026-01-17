@@ -25,15 +25,11 @@ def get_main_menu_keyboard() -> ReplyKeyboardMarkup:
     keyboard = [
         [
             KeyboardButton("📦 המשלוחים שלי"),
-            KeyboardButton("➕ הוסף משלוח")
+            KeyboardButton("🔄 רענן משלוח")
         ],
         [
-            KeyboardButton("🔄 רענן משלוח"),
-            KeyboardButton("📫 ארכיון")
-        ],
-        [
-            KeyboardButton("🔕 השתק התראות"),
-            KeyboardButton("🗑 הסר משלוח")
+            KeyboardButton("📫 ארכיון"),
+            KeyboardButton("🔕 השתק התראות")
         ],
         [
             KeyboardButton("❓ עזרה")
@@ -54,19 +50,14 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 📦 הבוט מאפשר לך לעקוב אחר משלוחים מכל העולם ולקבל התראות אוטומטיות.
 
 <b>כיצד להתחיל?</b>
-• לחץ על הכפתורים בתפריט למטה
-• או שלח מספר מעקב ישירות
+• פשוט שלח מספר מעקב ישירות
 
 <b>פעולות זמינות:</b>
 📦 המשלוחים שלי - צפה במשלוחים פעילים
-➕ הוסף משלוח - הוסף משלוח חדש למעקב
 🔄 רענן משלוח - רענון ידני של סטטוס
 📫 ארכיון - צפה במשלוחים שנמסרו
 🔕 השתק התראות - נהל התראות
-🗑 הסר משלוח - הסר משלוח מהמעקב
 ❓ עזרה - מידע נוסף
-
-💡 <i>אפשר גם להשתמש בפקודות: /add, /list, /refresh ועוד</i>
 """
 
     await update.message.reply_text(
@@ -82,15 +73,15 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 📖 <b>מדריך שימוש</b>
 
 <b>הוספת משלוח:</b>
-1. לחץ על "➕ הוסף משלוח" או שלח מספר מעקב ישירות
+1. שלח מספר מעקב ישירות לבוט
 2. אם יש מספר חברות שילוח אפשריות, בחר מהרשימה
-3. קבל עדכון מיידי על הסטטוס
+3. הוסף שם לחבילה (אופציונלי)
+4. קבל עדכון מיידי על הסטטוס
 
 <b>ניהול משלוחים:</b>
 • 📦 המשלוחים שלי - צפה בכל המשלוחים הפעילים
 • 📫 ארכיון - צפה במשלוחים שנמסרו
-• 🔄 רענן משלוח - רענן סטטוס ידנית (עם הגבלת זמן)
-• 🗑 הסר משלוח - הסר משלוח מהמעקב
+• 🔄 רענן משלוח - רענן סטטוס ידנית
 
 <b>התראות:</b>
 • תקבל התראה אוטומטית בכל שינוי סטטוס
@@ -101,8 +92,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 • עד 30 משלוחים פעילים במקביל
 • רענון ידני: פעם ב-10 דקות
 • הוספה: 5 משלוחים לדקה
-
-💡 <i>ניתן גם להשתמש בפקודות טקסט: /add, /list, /refresh ועוד</i>
 
 יש בעיה? פנה לתמיכה או השתמש ב-/start
 """
@@ -335,10 +324,33 @@ async def _finalize_add_shipment(
             
             success_text.append("\n🔔 תקבל עדכונים אוטומטיים בכל שינוי סטטוס.")
             
-            await status_msg.edit_text(
-                "\n".join(success_text),
-                parse_mode='HTML'
-            )
+            # Check if item_name was not provided (default name)
+            if item_name == "משלוח":
+                # Prompt user to add a name
+                keyboard = [
+                    [
+                        InlineKeyboardButton(
+                            "✏️ הוסף שם לחבילה",
+                            callback_data=f"prompt_name:{shipment.id}"
+                        ),
+                        InlineKeyboardButton(
+                            "⏭️ דלג",
+                            callback_data="skip_name"
+                        )
+                    ]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                
+                await status_msg.edit_text(
+                    "\n".join(success_text),
+                    reply_markup=reply_markup,
+                    parse_mode='HTML'
+                )
+            else:
+                await status_msg.edit_text(
+                    "\n".join(success_text),
+                    parse_mode='HTML'
+                )
     
     except Exception as e:
         logger.error(f"Error finalizing shipment: {e}", exc_info=True)
@@ -362,7 +374,7 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not subscriptions:
         await update.message.reply_text(
             "📭 אין לך משלוחים פעילים כרגע.\n\n"
-            "לחץ על '➕ הוסף משלוח' או שלח מספר מעקב ישירות.",
+            "שלח מספר מעקב ישירות כדי להוסיף משלוח.",
             reply_markup=get_main_menu_keyboard(),
             parse_mode='HTML'
         )
@@ -373,6 +385,8 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📦 <b>המשלוחים הפעילים שלך ({len(subscriptions)}):</b>",
         ""
     ]
+    
+    keyboard = []
     
     for subscription, shipment in subscriptions:
         lines.append(f"• <b>{subscription.item_name}</b>")
@@ -391,12 +405,28 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             lines.append(f"  {mute_status}")
         
         lines.append("")
+        
+        # Add action buttons for this shipment
+        keyboard.append([
+            InlineKeyboardButton(
+                f"✏️ {subscription.item_name[:15]}",
+                callback_data=f"edit_name:{user_id}:{shipment.id}"
+            ),
+            InlineKeyboardButton(
+                "📫 ארכב",
+                callback_data=f"archive:{user_id}:{shipment.id}"
+            ),
+            InlineKeyboardButton(
+                "🗑 מחק",
+                callback_data=f"remove:{user_id}:{shipment.id}"
+            )
+        ])
     
-    lines.append("💡 השתמש ב-/refresh לרענון ידני")
-    lines.append("או ב-/remove להסרת משלוח")
+    reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
     
     await update.message.reply_text(
         "\n".join(lines),
+        reply_markup=reply_markup,
         parse_mode='HTML'
     )
 
@@ -517,14 +547,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Map button text to handlers
     if text == "📦 המשלוחים שלי":
         await list_command(update, context)
-    elif text == "➕ הוסף משלוח":
-        await update.message.reply_text(
-            "📝 שלח מספר מעקב או השתמש בפורמט:\n"
-            "/add [מספר_מעקב] [שם_פריט]\n\n"
-            "דוגמה: /add RR123456789CN אוזניות\n"
-            "או פשוט שלח: RR123456789CN",
-            parse_mode='HTML'
-        )
     elif text == "🔄 רענן משלוח":
         from bot_handlers_extra import refresh_command
         await refresh_command(update, context)
@@ -533,9 +555,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif text == "🔕 השתק התראות":
         from bot_handlers_extra import mute_command
         await mute_command(update, context)
-    elif text == "🗑 הסר משלוח":
-        from bot_handlers_extra import remove_command
-        await remove_command(update, context)
     elif text == "❓ עזרה":
         await help_command(update, context)
 

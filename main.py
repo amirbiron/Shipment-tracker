@@ -84,11 +84,35 @@ def setup_handlers(application: Application):
             pattern=r"^remove:"
         )
     )
+    application.add_handler(
+        CallbackQueryHandler(
+            bot_handlers_extra.archive_callback,
+            pattern=r"^archive:"
+        )
+    )
+    application.add_handler(
+        CallbackQueryHandler(
+            bot_handlers_extra.edit_name_callback,
+            pattern=r"^edit_name:"
+        )
+    )
+    application.add_handler(
+        CallbackQueryHandler(
+            bot_handlers_extra.prompt_for_name_callback,
+            pattern=r"^prompt_name:"
+        )
+    )
+    application.add_handler(
+        CallbackQueryHandler(
+            bot_handlers_extra.skip_name_callback,
+            pattern=r"^skip_name$"
+        )
+    )
 
     # Button handler for main menu buttons (must be before message_handler)
     application.add_handler(
         MessageHandler(
-            filters.Regex(r"^(📦 המשלוחים שלי|➕ הוסף משלוח|🔄 רענן משלוח|📫 ארכיון|🔕 השתק התראות|🗑 הסר משלוח|❓ עזרה)$"),
+            filters.Regex(r"^(📦 המשלוחים שלי|🔄 רענן משלוח|📫 ארכיון|🔕 השתק התראות|❓ עזרה)$"),
             bot_handlers.button_handler
         )
     )

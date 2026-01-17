@@ -308,12 +308,162 @@ async def remove_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+async def archive_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle archive shipment callback"""
+    query = update.callback_query
+    await query.answer()
+    
+    _, user_id_str, shipment_id_str = query.data.split(':')
+    user_id = int(user_id_str)
+    shipment_id = ObjectId(shipment_id_str)
+    
+    db = await get_database()
+    success = await db.archive_shipment_for_user(user_id, shipment_id)
+    
+    if success:
+        await query.edit_message_text(
+            "📫 המשלוח הועבר לארכיון.",
+            parse_mode='HTML'
+        )
+    else:
+        await query.edit_message_text(
+            "❌ שגיאה בארכוב המשלוח.",
+            parse_mode='HTML'
+        )
+
+
+async def edit_name_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle edit name callback - prompt user for new name"""
+    query = update.callback_query
+    await query.answer()
+    
+    _, user_id_str, shipment_id_str = query.data.split(':')
+    
+    # Store the shipment_id in user context for the next message
+    context.user_data['editing_name_for'] = shipment_id_str
+    
+    await query.edit_message_text(
+        "✏️ שלח את השם החדש לחבילה:",
+        parse_mode='HTML'
+    )
+
+
+async def handle_name_edit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """
+    Handle name edit if user is in edit mode.
+    Returns True if handled, False otherwise.
+    """
+    if 'editing_name_for' not in context.user_data:
+        return False
+    
+    shipment_id_str = context.user_data.pop('editing_name_for')
+    new_name = update.message.text.strip()
+    
+    if len(new_name) > 50:
+        new_name = new_name[:50]
+    
+    user_id = update.effective_user.id
+    shipment_id = ObjectId(shipment_id_str)
+    
+    db = await get_database()
+    success = await db.update_subscription_name(user_id, shipment_id, new_name)
+    
+    if success:
+        await update.message.reply_text(
+            f"✅ שם החבילה עודכן ל: <b>{new_name}</b>",
+            parse_mode='HTML'
+        )
+    else:
+        await update.message.reply_text(
+            "❌ שגיאה בעדכון השם.",
+            parse_mode='HTML'
+        )
+    
+    return True
+
+
+async def prompt_for_name_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle 'add name' prompt callback"""
+    query = update.callback_query
+    await query.answer()
+    
+    _, shipment_id_str = query.data.split(':', 1)
+    
+    # Store in context for next message
+    context.user_data['naming_shipment'] = shipment_id_str
+    
+    await query.edit_message_text(
+        "✏️ שלח שם לחבילה (או /skip לדילוג):",
+        parse_mode='HTML'
+    )
+
+
+async def skip_name_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle skip name callback"""
+    query = update.callback_query
+    await query.answer()
+    
+    await query.edit_message_text(
+        "✅ המעקב הופעל! ניתן לשנות את השם בכל עת דרך 'המשלוחים שלי'.",
+        parse_mode='HTML'
+    )
+
+
+async def handle_new_shipment_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """
+    Handle name input for newly added shipment.
+    Returns True if handled, False otherwise.
+    """
+    if 'naming_shipment' not in context.user_data:
+        return False
+    
+    text = update.message.text.strip()
+    
+    # Check for skip command
+    if text.lower() == '/skip':
+        context.user_data.pop('naming_shipment', None)
+        await update.message.reply_text(
+            "✅ בסדר! ניתן לשנות את השם בכל עת דרך 'המשלוחים שלי'.",
+            parse_mode='HTML'
+        )
+        return True
+    
+    shipment_id_str = context.user_data.pop('naming_shipment')
+    new_name = text[:50] if len(text) > 50 else text
+    
+    user_id = update.effective_user.id
+    shipment_id = ObjectId(shipment_id_str)
+    
+    db = await get_database()
+    success = await db.update_subscription_name(user_id, shipment_id, new_name)
+    
+    if success:
+        await update.message.reply_text(
+            f"✅ שם החבילה עודכן ל: <b>{new_name}</b>",
+            parse_mode='HTML'
+        )
+    else:
+        await update.message.reply_text(
+            "❌ שגיאה בעדכון השם.",
+            parse_mode='HTML'
+        )
+    
+    return True
+
+
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Handle plain text messages
     Auto-detect tracking numbers
     """
     text = update.message.text.strip()
+    
+    # Check if user is in name editing/naming mode
+    if await handle_name_edit(update, context):
+        return
+    
+    if await handle_new_shipment_name(update, context):
+        return
     
     # Check if looks like a tracking number
     if len(text) >= 8 and len(text) <= 30:

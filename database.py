@@ -308,6 +308,43 @@ class Database:
         logger.info(f"Toggled mute for user {user_id}: {new_muted}")
         return new_muted
     
+    async def update_subscription_name(
+        self,
+        user_id: int,
+        shipment_id: ObjectId,
+        new_name: str
+    ) -> bool:
+        """Update the item name for a subscription"""
+        result = await self.subscriptions.update_one(
+            {"user_id": user_id, "shipment_id": shipment_id},
+            {"$set": {"item_name": new_name}}
+        )
+        if result.modified_count > 0:
+            logger.info(f"Updated subscription name for user {user_id} to: {new_name}")
+            return True
+        return False
+    
+    async def archive_shipment_for_user(self, user_id: int, shipment_id: ObjectId) -> bool:
+        """Archive a shipment for a specific user (mark subscription as archived)"""
+        # First, check if subscription exists
+        subscription = await self.get_subscription(user_id, shipment_id)
+        if not subscription:
+            return False
+        
+        # Archive the shipment (this affects all users tracking this shipment)
+        await self.shipments.update_one(
+            {"_id": shipment_id},
+            {
+                "$set": {
+                    "state": ShipmentState.ARCHIVED.value,
+                    "delivered_at": datetime.utcnow(),
+                    "updated_at": datetime.utcnow()
+                }
+            }
+        )
+        logger.info(f"Archived shipment {shipment_id} by user {user_id}")
+        return True
+    
     # === Shipment Events Operations (Optional) ===
     
     async def add_shipment_event(self, shipment_id: ObjectId, event: Dict[str, Any]):
