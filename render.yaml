@@ -13,7 +13,9 @@ services:
       - key: MONGODB_URI
         sync: false
       - key: TRACKING_PROVIDER
-        value: 17track
+        value: trackingmore
+      - key: TRACKING_API_REQUIRED
+        value: true
       - key: TRACKING_API_KEY
         sync: false
       - key: TRACKINGMORE_API_KEY
