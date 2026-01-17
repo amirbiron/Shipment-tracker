@@ -69,7 +69,7 @@ class ShipmentEvent:
     """Single tracking event"""
     status_raw: str
     status_norm: StatusNorm
-    timestamp: datetime
+    timestamp: Optional[datetime] = None
     location: Optional[str] = None
     raw: Optional[Dict[str, Any]] = None
     
@@ -84,10 +84,17 @@ class ShipmentEvent:
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'ShipmentEvent':
+        timestamp = data.get('timestamp')
+        if timestamp and not isinstance(timestamp, datetime):
+            try:
+                timestamp = datetime.fromisoformat(timestamp)
+            except (ValueError, TypeError):
+                timestamp = None
+        
         return cls(
-            status_raw=data['status_raw'],
-            status_norm=StatusNorm(data['status_norm']),
-            timestamp=data['timestamp'] if isinstance(data['timestamp'], datetime) else datetime.fromisoformat(data['timestamp']),
+            status_raw=data.get('status_raw', ''),
+            status_norm=StatusNorm(data.get('status_norm', 'UNKNOWN')),
+            timestamp=timestamp,
             location=data.get('location'),
             raw=data.get('raw')
         )

@@ -495,12 +495,32 @@ class TrackingAPI:
         location = latest.get('c', '')    # Location
         timestamp_str = latest.get('a', '')  # Timestamp
         
-        # Parse timestamp
-        try:
-            # 17TRACK format: "2025-01-17 10:00:00"
-            timestamp = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
-        except (ValueError, TypeError):
-            timestamp = datetime.utcnow()
+        logger.info(f"Parsing timestamp: '{timestamp_str}'")
+        
+        # Parse timestamp - try multiple formats
+        timestamp = None
+        if timestamp_str:
+            formats_to_try = [
+                "%Y-%m-%d %H:%M:%S",
+                "%Y-%m-%d %H:%M",
+                "%Y-%m-%dT%H:%M:%S",
+                "%Y-%m-%dT%H:%M:%SZ",
+                "%Y-%m-%d",
+                "%d-%m-%Y %H:%M:%S",
+                "%d/%m/%Y %H:%M:%S",
+                "%d/%m/%Y %H:%M",
+            ]
+            for fmt in formats_to_try:
+                try:
+                    timestamp = datetime.strptime(timestamp_str, fmt)
+                    logger.info(f"Parsed timestamp with format {fmt}: {timestamp}")
+                    break
+                except (ValueError, TypeError):
+                    continue
+        
+        if timestamp is None:
+            logger.warning(f"Could not parse timestamp: '{timestamp_str}', using None")
+            timestamp = None  # Don't use current time as fallback
         
         # Normalize status
         status_norm = self._normalize_status(status_raw, track_info)
@@ -601,8 +621,53 @@ class TrackingAPI:
     
     def _calculate_event_hash(self, event: ShipmentEvent) -> str:
         """Calculate SHA1 hash of event for change detection"""
-        hash_str = f"{event.status_raw}|{event.timestamp.isoformat()}|{event.location or ''}"
+        timestamp_str = event.timestamp.isoformat() if event.timestamp else 'none'
+        hash_str = f"{event.status_raw}|{timestamp_str}|{event.location or ''}"
         return hashlib.sha1(hash_str.encode()).hexdigest()
+    
+    def parse_all_events_17track(self, response: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Parse all tracking events from 17TRACK response for history display"""
+        track_info = response.get('track', {})
+        all_events = []
+        
+        # Collect events from all sources
+        for field in ['z0', 'z1', 'z2']:
+            events_data = track_info.get(field)
+            if events_data:
+                if isinstance(events_data, list):
+                    all_events.extend(events_data)
+                elif isinstance(events_data, dict):
+                    if 'items' in events_data:
+                        all_events.extend(events_data.get('items', []))
+                    elif 'events' in events_data:
+                        all_events.extend(events_data.get('events', []))
+                    elif 'a' in events_data and 'z' in events_data:
+                        all_events.append(events_data)
+                    else:
+                        for key, value in events_data.items():
+                            if isinstance(value, dict) and ('a' in value or 'z' in value):
+                                all_events.append(value)
+                            elif isinstance(value, list):
+                                all_events.extend(value)
+        
+        # Filter and sort
+        events = [e for e in all_events if isinstance(e, dict)]
+        events = sorted(events, key=lambda x: x.get('a', '') if isinstance(x, dict) else '', reverse=True)
+        
+        # Format for display
+        formatted_events = []
+        for event in events:
+            timestamp_str = event.get('a', '')
+            status = event.get('z', '')
+            location = event.get('c', '')
+            
+            formatted_events.append({
+                'timestamp': timestamp_str,
+                'status': status,
+                'location': location
+            })
+        
+        return formatted_events
 
 
 # Helper function to get API instance

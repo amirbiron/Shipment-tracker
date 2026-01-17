@@ -154,29 +154,42 @@ async def _perform_refresh(update: Update, shipment, item_name: str, is_callback
             shipment.last_check_at = datetime.utcnow()
             await db.update_shipment(shipment)
             
+            # Get all events for history
+            all_events = api.parse_all_events_17track(tracking_data)
+            
             # Build result message
             lines = [
-                f"✅ <b>{item_name}</b>" + (" - עדכון חדש!" if changed else ""),
-                "",
-                f"📦 <code>{shipment.tracking_number}</code>",
+                f"📦 <b>{item_name}</b>",
+                f"מספר מעקב: <code>{shipment.tracking_number}</code>",
                 "",
                 f"<b>סטטוס:</b> {STATUS_TRANSLATIONS_HE.get(new_event.status_norm, 'לא ידוע')}",
             ]
             
-            if new_event.status_raw:
-                lines.append(f"📝 {new_event.status_raw}")
-            
-            if new_event.location:
-                lines.append(f"📍 {new_event.location}")
-            
-            if new_event.timestamp:
-                time_str = new_event.timestamp.strftime("%d/%m/%Y %H:%M")
-                lines.append(f"🕐 {time_str}")
-            
             if changed:
-                lines.append("\n🔔 זה שינוי חדש!")
-            else:
-                lines.append("\nℹ️ אין שינוי מהעדכון האחרון")
+                lines.append("🔔 <i>עדכון חדש!</i>")
+            
+            # Add tracking history
+            if all_events:
+                lines.append("")
+                lines.append("<b>📜 היסטוריית מעקב:</b>")
+                
+                # Show up to 10 recent events
+                for event in all_events[:10]:
+                    timestamp = event.get('timestamp', '')
+                    status = event.get('status', '')
+                    location = event.get('location', '')
+                    
+                    # Format timestamp for display
+                    time_display = timestamp[:16] if timestamp else ''  # "YYYY-MM-DD HH:MM"
+                    
+                    if location:
+                        lines.append(f"• {time_display} - {location}")
+                        lines.append(f"  {status}")
+                    else:
+                        lines.append(f"• {time_display} - {status}")
+                
+                if len(all_events) > 10:
+                    lines.append(f"<i>... ועוד {len(all_events) - 10} אירועים</i>")
             
             await status_msg.edit_text(
                 "\n".join(lines),
@@ -459,7 +472,7 @@ async def handle_new_shipment_name(update: Update, context: ContextTypes.DEFAULT
 
 
 async def shipment_details_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle shipment details callback - show full shipment info"""
+    """Handle shipment details callback - show full shipment info with history"""
     query = update.callback_query
     await query.answer()
     
@@ -480,45 +493,45 @@ async def shipment_details_callback(update: Update, context: ContextTypes.DEFAUL
     # Build detailed message
     lines = [
         f"📦 <b>{subscription.item_name}</b>",
-        "",
         f"מספר מעקב: <code>{shipment.tracking_number}</code>",
+        "",
     ]
     
     if shipment.last_event:
         from models import STATUS_TRANSLATIONS_HE
         status = STATUS_TRANSLATIONS_HE.get(shipment.last_event.status_norm, 'לא ידוע')
-        lines.append(f"סטטוס: <b>{status}</b>")
-        
-        if shipment.last_event.status_raw:
-            lines.append(f"📝 {shipment.last_event.status_raw}")
-        
-        if shipment.last_event.location:
-            lines.append(f"📍 {shipment.last_event.location}")
+        lines.append(f"<b>סטטוס:</b> {status}")
         
         if shipment.last_event.timestamp:
             time_str = shipment.last_event.timestamp.strftime("%d/%m/%Y %H:%M")
             lines.append(f"🕐 {time_str}")
-    
-    if shipment.last_check_at:
-        time_ago = _format_time_ago(shipment.last_check_at)
-        lines.append(f"\nעדכון אחרון: {time_ago}")
+        
+        if shipment.last_event.location:
+            lines.append(f"📍 {shipment.last_event.location}")
     
     if subscription.muted:
         lines.append("🔕 התראות מושתקות")
+    
+    lines.append("")
+    lines.append("💡 לחץ על <b>רענן</b> לצפייה בהיסטוריה המלאה")
+    
+    if shipment.last_check_at:
+        time_ago = _format_time_ago(shipment.last_check_at)
+        lines.append(f"<i>עדכון אחרון: {time_ago}</i>")
     
     # Action buttons
     keyboard = [
         [
             InlineKeyboardButton(
-                "🔄 רענן",
+                "🔄 רענן והצג היסטוריה",
                 callback_data=f"refresh:{shipment.id}"
-            ),
-            InlineKeyboardButton(
-                "✏️ ערוך",
-                callback_data=f"edit_name:{user_id}:{shipment.id}"
             )
         ],
         [
+            InlineKeyboardButton(
+                "✏️ ערוך",
+                callback_data=f"edit_name:{user_id}:{shipment.id}"
+            ),
             InlineKeyboardButton(
                 "📫 ארכב",
                 callback_data=f"archive:{user_id}:{shipment.id}"
