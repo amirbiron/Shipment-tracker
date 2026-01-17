@@ -294,11 +294,21 @@ class TrackingAPI:
             response.raise_for_status()
             data = response.json()
             
+            logger.info(f"17track API response for {tracking_number}: code={data.get('code')}")
+            
             if data.get('code') == 0 and data.get('data'):
                 accepted = data['data'].get('accepted', [])
+                rejected = data['data'].get('rejected', [])
+                
+                if rejected:
+                    logger.warning(f"17track rejected {tracking_number}: {rejected}")
+                
                 if accepted:
-                    return accepted[0]
+                    result = accepted[0]
+                    logger.info(f"17track accepted response keys: {result.keys() if isinstance(result, dict) else type(result)}")
+                    return result
             
+            logger.warning(f"17track no data for {tracking_number}, full response: {data}")
             return None
         
         except httpx.HTTPError as e:
@@ -411,21 +421,48 @@ class TrackingAPI:
     
     def _parse_17track(self, response: Dict[str, Any]) -> Tuple[Optional[ShipmentEvent], str]:
         """Parse 17TRACK response"""
+        logger.info(f"Parsing 17track response, keys: {response.keys() if isinstance(response, dict) else type(response)}")
+        
         track_info = response.get('track', {})
         
-        # Get latest event
-        events = track_info.get('z0', [])  # z0 contains tracking events
+        # Log track_info structure
+        if track_info:
+            logger.info(f"track_info keys: {track_info.keys() if isinstance(track_info, dict) else type(track_info)}")
+        else:
+            logger.warning(f"No 'track' in response. Full response: {response}")
+            # Try alternative structures
+            # Sometimes the track info might be directly in response
+            if 'z0' in response:
+                track_info = response
+            elif 'track_info' in response:
+                track_info = response.get('track_info', {})
+        
+        # Get latest event - try multiple possible field names
+        events = track_info.get('z0', []) or track_info.get('z1', []) or track_info.get('z2', [])
+        
+        logger.info(f"Events found: {len(events) if events else 0}, type: {type(events)}")
+        
         if not events:
+            # Log what we have
+            logger.warning(f"No events in track_info. track_info: {track_info}")
             return None, ""
         
         # Filter out non-dict items (sometimes API returns strings)
+        original_count = len(events)
         events = [e for e in events if isinstance(e, dict)]
+        
+        if len(events) != original_count:
+            logger.warning(f"Filtered out {original_count - len(events)} non-dict events")
+        
         if not events:
+            logger.warning(f"No dict events after filtering")
             return None, ""
         
         # Sort by time (newest first)
         events = sorted(events, key=lambda x: x.get('a', '') if isinstance(x, dict) else '', reverse=True)
         latest = events[0]
+        
+        logger.info(f"Latest event: {latest}")
         
         # Parse event
         status_raw = latest.get('z', '')  # Status description

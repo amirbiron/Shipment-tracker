@@ -120,8 +120,9 @@ async def _perform_refresh(update: Update, shipment, item_name: str, is_callback
             
             if not tracking_data:
                 await status_msg.edit_text(
-                    "❌ לא ניתן לקבל מידע על המשלוח כרגע.\n"
-                    "נסה שוב מאוחר יותר.",
+                    f"❌ לא ניתן לקבל מידע על המשלוח כרגע.\n"
+                    f"מספר מעקב: <code>{shipment.tracking_number}</code>\n"
+                    f"נסה שוב מאוחר יותר.",
                     parse_mode='HTML'
                 )
                 return
@@ -130,8 +131,14 @@ async def _perform_refresh(update: Update, shipment, item_name: str, is_callback
             new_event, new_hash = api.parse_tracking_response(tracking_data)
             
             if not new_event:
+                # Show what we got from API for debugging
+                track_info = tracking_data.get('track', {})
+                status_code = track_info.get('b', 'N/A') if track_info else 'N/A'
                 await status_msg.edit_text(
-                    "ℹ️ אין מידע זמין עבור משלוח זה כרגע.",
+                    f"ℹ️ אין מידע זמין עבור משלוח זה כרגע.\n\n"
+                    f"מספר מעקב: <code>{shipment.tracking_number}</code>\n"
+                    f"קוד סטטוס API: {status_code}\n\n"
+                    f"ייתכן שהמשלוח עדיין לא נרשם במערכת המעקב.",
                     parse_mode='HTML'
                 )
                 return
