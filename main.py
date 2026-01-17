@@ -84,7 +84,15 @@ def setup_handlers(application: Application):
             pattern=r"^remove:"
         )
     )
-    
+
+    # Button handler for main menu buttons (must be before message_handler)
+    application.add_handler(
+        MessageHandler(
+            filters.Regex(r"^(📦 המשלוחים שלי|➕ הוסף משלוח|🔄 רענן משלוח|📫 ארכיון|🔕 השתק התראות|🗑 הסר משלוח|❓ עזרה)$"),
+            bot_handlers.button_handler
+        )
+    )
+
     # Message handler for tracking numbers
     application.add_handler(
         MessageHandler(
@@ -92,7 +100,7 @@ def setup_handlers(application: Application):
             bot_handlers_extra.message_handler
         )
     )
-    
+
     logger.info("Handlers registered")
 
 
