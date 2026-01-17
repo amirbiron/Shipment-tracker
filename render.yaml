@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: shipment-tracker-bot
+    env: python
+    region: oregon
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.0
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: MONGODB_URI
+        sync: false
+      - key: TRACKING_API_KEY
+        sync: false
+      - key: ENVIRONMENT
+        value: production
+      - key: LOG_LEVEL
+        value: INFO
+      - key: TIMEZONE
+        value: Asia/Jerusalem
+      - key: MAX_ACTIVE_SHIPMENTS_PER_USER
+        value: 30
+      - key: REFRESH_COOLDOWN_MINUTES
+        value: 10
+      - key: ADD_RATE_LIMIT_PER_MINUTE
+        value: 5
+      - key: POLLING_INTERVAL_MINUTES
+        value: 2
