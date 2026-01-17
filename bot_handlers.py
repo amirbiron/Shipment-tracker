@@ -11,7 +11,7 @@ from telegram.ext import ContextTypes
 
 from models import Shipment, Subscription, ShipmentState, STATUS_TRANSLATIONS_HE
 from database import get_database
-from tracking_api import get_tracking_api, TrackingAPIError, TrackingNotConfiguredError
+from tracking_api import get_tracking_api, TrackingAPIError
 from config import get_config
 
 logger = logging.getLogger(__name__)
@@ -168,16 +168,6 @@ async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     status_msg
                 )
     
-    except TrackingNotConfiguredError:
-        await status_msg.edit_text(
-            "⚠️ <b>המעקב לא מוגדר</b>\n\n"
-            "כדי להשתמש במעקב משלוחים צריך להגדיר מפתח API:\n"
-            "• 17TRACK: הגדר <code>TRACKING_API_KEY</code> (או <code>SEVENTEENTRACK_API_KEY</code>)\n"
-            "• TrackingMore: הגדר <code>TRACKINGMORE_API_KEY</code> והגדר <code>TRACKING_PROVIDER=trackingmore</code>\n\n"
-            "אם אתה על Render: Service → Environment → הוסף את המשתנים ואז Deploy מחדש.",
-            parse_mode='HTML'
-        )
-
     except TrackingAPIError as e:
         logger.error(f"API error in add_command: {e}")
         await status_msg.edit_text(
@@ -317,16 +307,6 @@ async def _finalize_add_shipment(
                 parse_mode='HTML'
             )
     
-    except TrackingNotConfiguredError:
-        await status_msg.edit_text(
-            "⚠️ <b>המעקב לא מוגדר</b>\n\n"
-            "צריך להגדיר מפתח API כדי להוסיף משלוחים:\n"
-            "• 17TRACK: <code>TRACKING_API_KEY</code> (או <code>SEVENTEENTRACK_API_KEY</code>)\n"
-            "• TrackingMore: <code>TRACKINGMORE_API_KEY</code> + <code>TRACKING_PROVIDER=trackingmore</code>\n\n"
-            "ב־Render: Service → Environment → הוסף משתנים ואז Deploy מחדש.",
-            parse_mode='HTML'
-        )
-
     except Exception as e:
         logger.error(f"Error finalizing shipment: {e}", exc_info=True)
         await status_msg.edit_text(

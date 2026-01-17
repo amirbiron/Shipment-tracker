@@ -20,11 +20,6 @@ class TrackingAPIError(Exception):
     pass
 
 
-class TrackingNotConfiguredError(TrackingAPIError):
-    """Tracking API is disabled or missing API key"""
-    pass
-
-
 class RateLimitError(TrackingAPIError):
     """Rate limit exceeded"""
     pass
@@ -35,10 +30,6 @@ class TrackingAPI:
     
     def __init__(self):
         config = get_config()
-        if not getattr(config.tracking_api, "enabled", True) or not getattr(config.tracking_api, "api_key", ""):
-            raise TrackingNotConfiguredError(
-                "Tracking API is not configured. Set TRACKING_API_KEY (17track) or TRACKINGMORE_API_KEY (trackingmore)."
-            )
         self.provider = config.tracking_api.provider
         self.api_key = config.tracking_api.api_key
         self.base_url = config.tracking_api.base_url

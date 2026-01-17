@@ -30,13 +30,6 @@ class ShipmentScheduler:
     
     def start(self):
         """Start the scheduler"""
-        if not getattr(self.config.tracking_api, "enabled", True):
-            logger.warning(
-                "Tracking API is disabled (TRACKING_API_REQUIRED=false or missing key). "
-                "Scheduler will not start."
-            )
-            return
-
         # Add polling job
         self.scheduler.add_job(
             self._poll_shipments,

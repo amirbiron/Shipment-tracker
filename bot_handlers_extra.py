@@ -10,7 +10,7 @@ from bson import ObjectId
 
 from models import STATUS_TRANSLATIONS_HE
 from database import get_database
-from tracking_api import get_tracking_api, TrackingAPIError, TrackingNotConfiguredError
+from tracking_api import get_tracking_api, TrackingAPIError
 from bot_handlers import _check_rate_limit, _format_time_ago
 
 logger = logging.getLogger(__name__)
@@ -175,16 +175,6 @@ async def _perform_refresh(update: Update, shipment, item_name: str, is_callback
                 parse_mode='HTML'
             )
     
-    except TrackingNotConfiguredError:
-        await status_msg.edit_text(
-            "⚠️ <b>המעקב לא מוגדר</b>\n\n"
-            "כדי לרענן סטטוס צריך להגדיר מפתח API:\n"
-            "• 17TRACK: <code>TRACKING_API_KEY</code> (או <code>SEVENTEENTRACK_API_KEY</code>)\n"
-            "• TrackingMore: <code>TRACKINGMORE_API_KEY</code> + <code>TRACKING_PROVIDER=trackingmore</code>\n\n"
-            "ב־Render: Service → Environment → הוסף משתנים ואז Deploy מחדש.",
-            parse_mode='HTML'
-        )
-
     except TrackingAPIError as e:
         logger.error(f"API error during refresh: {e}")
         await status_msg.edit_text(
