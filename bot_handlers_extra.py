@@ -451,6 +451,164 @@ async def handle_new_shipment_name(update: Update, context: ContextTypes.DEFAULT
     return True
 
 
+async def shipment_details_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle shipment details callback - show full shipment info"""
+    query = update.callback_query
+    await query.answer()
+    
+    shipment_id_str = query.data.split(':', 1)[1]
+    shipment_id = ObjectId(shipment_id_str)
+    
+    user_id = update.effective_user.id
+    db = await get_database()
+    
+    # Get shipment and subscription
+    shipment = await db.get_shipment(shipment_id)
+    subscription = await db.get_subscription(user_id, shipment_id)
+    
+    if not shipment or not subscription:
+        await query.edit_message_text("❌ משלוח לא נמצא.")
+        return
+    
+    # Build detailed message
+    lines = [
+        f"📦 <b>{subscription.item_name}</b>",
+        "",
+        f"מספר מעקב: <code>{shipment.tracking_number}</code>",
+    ]
+    
+    if shipment.last_event:
+        from models import STATUS_TRANSLATIONS_HE
+        status = STATUS_TRANSLATIONS_HE.get(shipment.last_event.status_norm, 'לא ידוע')
+        lines.append(f"סטטוס: <b>{status}</b>")
+        
+        if shipment.last_event.status_raw:
+            lines.append(f"📝 {shipment.last_event.status_raw}")
+        
+        if shipment.last_event.location:
+            lines.append(f"📍 {shipment.last_event.location}")
+        
+        if shipment.last_event.timestamp:
+            time_str = shipment.last_event.timestamp.strftime("%d/%m/%Y %H:%M")
+            lines.append(f"🕐 {time_str}")
+    
+    if shipment.last_check_at:
+        time_ago = _format_time_ago(shipment.last_check_at)
+        lines.append(f"\nעדכון אחרון: {time_ago}")
+    
+    if subscription.muted:
+        lines.append("🔕 התראות מושתקות")
+    
+    # Action buttons
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                "🔄 רענן",
+                callback_data=f"refresh:{shipment.id}"
+            ),
+            InlineKeyboardButton(
+                "✏️ ערוך",
+                callback_data=f"edit_name:{user_id}:{shipment.id}"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "📫 ארכב",
+                callback_data=f"archive:{user_id}:{shipment.id}"
+            ),
+            InlineKeyboardButton(
+                "🗑 מחק",
+                callback_data=f"remove:{user_id}:{shipment.id}"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "◀️ חזרה לרשימה",
+                callback_data="back_to_list"
+            )
+        ]
+    ]
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(
+        "\n".join(lines),
+        reply_markup=reply_markup,
+        parse_mode='HTML'
+    )
+
+
+async def back_to_list_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle back to list callback"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    db = await get_database()
+    
+    # Get active subscriptions
+    from models import ShipmentState, STATUS_TRANSLATIONS_HE
+    subscriptions = await db.get_user_subscriptions(
+        user_id,
+        state=ShipmentState.ACTIVE
+    )
+    
+    if not subscriptions:
+        await query.edit_message_text(
+            "📭 אין לך משלוחים פעילים כרגע.\n\n"
+            "שלח מספר מעקב ישירות כדי להוסיף משלוח.",
+            parse_mode='HTML'
+        )
+        return
+    
+    # Build message header
+    message = f"📦 <b>המשלוחים הפעילים שלך ({len(subscriptions)}):</b>"
+    
+    keyboard = []
+    
+    for subscription, shipment in subscriptions:
+        # Build shipment info for button
+        status_text = ""
+        if shipment.last_event:
+            status = STATUS_TRANSLATIONS_HE.get(shipment.last_event.status_norm, 'לא ידוע')
+            status_text = f" • {status}"
+        
+        mute_icon = " 🔕" if subscription.muted else ""
+        
+        # Main shipment button
+        shipment_label = f"📦 {subscription.item_name}{status_text}{mute_icon}"
+        keyboard.append([
+            InlineKeyboardButton(
+                shipment_label,
+                callback_data=f"shipment_details:{shipment.id}"
+            )
+        ])
+        
+        # Action buttons row
+        keyboard.append([
+            InlineKeyboardButton(
+                "✏️ ערוך",
+                callback_data=f"edit_name:{user_id}:{shipment.id}"
+            ),
+            InlineKeyboardButton(
+                "📫 ארכב",
+                callback_data=f"archive:{user_id}:{shipment.id}"
+            ),
+            InlineKeyboardButton(
+                "🗑 מחק",
+                callback_data=f"remove:{user_id}:{shipment.id}"
+            )
+        ])
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(
+        message,
+        reply_markup=reply_markup,
+        parse_mode='HTML'
+    )
+
+
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Handle plain text messages
