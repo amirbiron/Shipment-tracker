@@ -3,7 +3,6 @@ services:
     name: shipment-tracker-bot
     env: python
     region: oregon
-    plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: python main.py
     envVars:
