@@ -231,7 +231,8 @@ class Database:
         if state:
             pipeline.append({"$match": {"shipment.state": state.value}})
         
-        cursor = self.subscriptions.aggregate(pipeline)
+        # PyMongo asyncio: aggregate() is a coroutine that returns an async cursor
+        cursor = await self.subscriptions.aggregate(pipeline)
         
         results = []
         async for doc in cursor:
@@ -285,10 +286,12 @@ class Database:
             {"$count": "total"}
         ]
         
-        cursor = self.subscriptions.aggregate(pipeline)
-        result = await cursor.to_list(length=1)
-        
-        return result[0]['total'] if result else 0
+        # PyMongo asyncio: aggregate() is a coroutine that returns an async cursor.
+        # `$count` returns at most one document.
+        cursor = await self.subscriptions.aggregate(pipeline)
+        async for doc in cursor:
+            return int(doc.get("total", 0))
+        return 0
     
     async def toggle_mute(self, user_id: int, shipment_id: ObjectId) -> bool:
         """Toggle mute status for a subscription"""
