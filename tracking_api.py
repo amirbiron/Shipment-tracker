@@ -625,38 +625,95 @@ class TrackingAPI:
         hash_str = f"{event.status_raw}|{timestamp_str}|{event.location or ''}"
         return hashlib.sha1(hash_str.encode()).hexdigest()
     
-    def parse_all_events_17track(self, response: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Parse all tracking events from 17TRACK response for history display"""
+    def parse_tracking_details_17track(self, response: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Parse complete tracking details from 17TRACK response.
+        Returns carriers info and all events from both origin and destination.
+        """
         track_info = response.get('track', {})
+        
+        # Get carrier information
+        w1 = track_info.get('w1', {})  # Origin carrier (e.g., Cainiao, China Post)
+        w2 = track_info.get('w2', {})  # Destination carrier (e.g., Israel Post)
+        
+        origin_carrier = w1.get('name', '') if isinstance(w1, dict) else str(w1) if w1 else ''
+        dest_carrier = w2.get('name', '') if isinstance(w2, dict) else str(w2) if w2 else ''
+        
+        # Build carrier string
+        if origin_carrier and dest_carrier:
+            carriers_str = f"{origin_carrier} ➡️ {dest_carrier}"
+        elif origin_carrier:
+            carriers_str = origin_carrier
+        elif dest_carrier:
+            carriers_str = dest_carrier
+        else:
+            carriers_str = "לא זוהה"
+        
+        logger.info(f"Carriers: {carriers_str} (w1={w1}, w2={w2})")
+        
+        # Get status code
+        status_code = track_info.get('e', 0)  # 10=Transit, 30=Pickup, 40=Delivered
+        
+        # Collect ALL events from multiple sources
         all_events = []
         
-        # Collect events from all sources
-        for field in ['z0', 'z1', 'z2']:
+        # z1 = Origin country events (e.g., events from China)
+        # z2 = Destination country events (e.g., events from Israel)  
+        # z0 = Combined/latest events
+        # Also check ygt1, ygt2 for additional tracking info
+        
+        event_fields = ['z1', 'z2', 'z0', 'ygt1', 'ygt2']
+        
+        for field in event_fields:
             events_data = track_info.get(field)
-            if events_data:
-                if isinstance(events_data, list):
-                    all_events.extend(events_data)
-                elif isinstance(events_data, dict):
-                    if 'items' in events_data:
-                        all_events.extend(events_data.get('items', []))
-                    elif 'events' in events_data:
-                        all_events.extend(events_data.get('events', []))
-                    elif 'a' in events_data and 'z' in events_data:
-                        all_events.append(events_data)
-                    else:
-                        for key, value in events_data.items():
-                            if isinstance(value, dict) and ('a' in value or 'z' in value):
-                                all_events.append(value)
-                            elif isinstance(value, list):
-                                all_events.extend(value)
+            if not events_data:
+                continue
+                
+            logger.info(f"Processing {field}: type={type(events_data)}")
+            
+            if isinstance(events_data, list):
+                # Direct list of events
+                for item in events_data:
+                    if isinstance(item, dict) and ('a' in item or 'z' in item):
+                        all_events.append(item)
+            elif isinstance(events_data, dict):
+                # Dict might contain events in various ways
+                # Check if it's a single event
+                if 'a' in events_data and 'z' in events_data:
+                    all_events.append(events_data)
+                else:
+                    # Try to extract events from nested structure
+                    for key, value in events_data.items():
+                        if isinstance(value, dict) and ('a' in value or 'z' in value):
+                            all_events.append(value)
+                        elif isinstance(value, list):
+                            for item in value:
+                                if isinstance(item, dict) and ('a' in item or 'z' in item):
+                                    all_events.append(item)
         
-        # Filter and sort
-        events = [e for e in all_events if isinstance(e, dict)]
-        events = sorted(events, key=lambda x: x.get('a', '') if isinstance(x, dict) else '', reverse=True)
+        logger.info(f"Total events collected: {len(all_events)}")
         
-        # Format for display
+        # Remove duplicates based on timestamp + status
+        seen = set()
+        unique_events = []
+        for event in all_events:
+            key = (event.get('a', ''), event.get('z', ''))
+            if key not in seen:
+                seen.add(key)
+                unique_events.append(event)
+        
+        # Sort by timestamp (newest first)
+        unique_events = sorted(
+            unique_events, 
+            key=lambda x: x.get('a', '') if isinstance(x, dict) else '', 
+            reverse=True
+        )
+        
+        logger.info(f"Unique events after dedup: {len(unique_events)}")
+        
+        # Format events for display
         formatted_events = []
-        for event in events:
+        for event in unique_events:
             timestamp_str = event.get('a', '')
             status = event.get('z', '')
             location = event.get('c', '')
@@ -667,7 +724,18 @@ class TrackingAPI:
                 'location': location
             })
         
-        return formatted_events
+        return {
+            'carriers': carriers_str,
+            'origin_carrier': origin_carrier,
+            'dest_carrier': dest_carrier,
+            'status_code': status_code,
+            'events': formatted_events
+        }
+    
+    def parse_all_events_17track(self, response: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Parse all tracking events - wrapper for backward compatibility"""
+        details = self.parse_tracking_details_17track(response)
+        return details.get('events', [])
 
 
 # Helper function to get API instance
