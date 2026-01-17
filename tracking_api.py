@@ -431,31 +431,57 @@ class TrackingAPI:
         else:
             logger.warning(f"No 'track' in response. Full response: {response}")
             # Try alternative structures
-            # Sometimes the track info might be directly in response
             if 'z0' in response:
                 track_info = response
             elif 'track_info' in response:
                 track_info = response.get('track_info', {})
         
-        # Get latest event - try multiple possible field names
-        events = track_info.get('z0', []) or track_info.get('z1', []) or track_info.get('z2', [])
+        # Collect events from all sources (z0=origin, z1=destination, z2=combined)
+        all_events = []
         
-        logger.info(f"Events found: {len(events) if events else 0}, type: {type(events)}")
+        for field in ['z0', 'z1', 'z2']:
+            events_data = track_info.get(field)
+            if events_data:
+                logger.info(f"{field} type: {type(events_data)}")
+                
+                # Handle both list and dict formats
+                if isinstance(events_data, list):
+                    all_events.extend(events_data)
+                elif isinstance(events_data, dict):
+                    # z0/z1/z2 might be a dict with events inside
+                    # Try to extract events from common keys
+                    if 'items' in events_data:
+                        all_events.extend(events_data.get('items', []))
+                    elif 'events' in events_data:
+                        all_events.extend(events_data.get('events', []))
+                    else:
+                        # The dict itself might contain event-like data
+                        # Check if it has event fields (a=timestamp, z=status)
+                        if 'a' in events_data and 'z' in events_data:
+                            all_events.append(events_data)
+                        else:
+                            # Try to get values if they look like events
+                            for key, value in events_data.items():
+                                if isinstance(value, dict) and ('a' in value or 'z' in value):
+                                    all_events.append(value)
+                                elif isinstance(value, list):
+                                    all_events.extend(value)
         
-        if not events:
-            # Log what we have
-            logger.warning(f"No events in track_info. track_info: {track_info}")
+        logger.info(f"Total events collected: {len(all_events)}")
+        
+        if not all_events:
+            logger.warning(f"No events found in track_info")
             return None, ""
         
-        # Filter out non-dict items (sometimes API returns strings)
-        original_count = len(events)
-        events = [e for e in events if isinstance(e, dict)]
+        # Filter out non-dict items
+        original_count = len(all_events)
+        events = [e for e in all_events if isinstance(e, dict)]
         
         if len(events) != original_count:
-            logger.warning(f"Filtered out {original_count - len(events)} non-dict events")
+            logger.info(f"Filtered to {len(events)} dict events from {original_count}")
         
         if not events:
-            logger.warning(f"No dict events after filtering")
+            logger.warning(f"No valid events after filtering. Sample data: {all_events[:2] if all_events else 'empty'}")
             return None, ""
         
         # Sort by time (newest first)
