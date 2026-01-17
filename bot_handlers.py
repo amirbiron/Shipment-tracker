@@ -380,36 +380,33 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # Build message
-    lines = [
-        f"📦 <b>המשלוחים הפעילים שלך ({len(subscriptions)}):</b>",
-        ""
-    ]
+    # Build message header
+    message = f"📦 <b>המשלוחים הפעילים שלך ({len(subscriptions)}):</b>"
     
     keyboard = []
     
     for subscription, shipment in subscriptions:
-        lines.append(f"• <b>{subscription.item_name}</b>")
-        lines.append(f"  מספר: <code>{shipment.tracking_number}</code>")
-        
+        # Build shipment info for button
+        status_text = ""
         if shipment.last_event:
             status = STATUS_TRANSLATIONS_HE.get(shipment.last_event.status_norm, 'לא ידוע')
-            lines.append(f"  סטטוס: {status}")
-            
-            if shipment.last_check_at:
-                time_ago = _format_time_ago(shipment.last_check_at)
-                lines.append(f"  עדכון אחרון: {time_ago}")
+            status_text = f" • {status}"
         
-        mute_status = "🔕 מושתק" if subscription.muted else ""
-        if mute_status:
-            lines.append(f"  {mute_status}")
+        mute_icon = " 🔕" if subscription.muted else ""
         
-        lines.append("")
-        
-        # Add action buttons for this shipment
+        # Main shipment button
+        shipment_label = f"📦 {subscription.item_name}{status_text}{mute_icon}"
         keyboard.append([
             InlineKeyboardButton(
-                f"✏️ {subscription.item_name[:15]}",
+                shipment_label,
+                callback_data=f"shipment_details:{shipment.id}"
+            )
+        ])
+        
+        # Action buttons row
+        keyboard.append([
+            InlineKeyboardButton(
+                "✏️ ערוך",
                 callback_data=f"edit_name:{user_id}:{shipment.id}"
             ),
             InlineKeyboardButton(
@@ -422,10 +419,10 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         ])
     
-    reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+    reply_markup = InlineKeyboardMarkup(keyboard)
     
     await update.message.reply_text(
-        "\n".join(lines),
+        message,
         reply_markup=reply_markup,
         parse_mode='HTML'
     )

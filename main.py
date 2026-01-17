@@ -108,6 +108,18 @@ def setup_handlers(application: Application):
             pattern=r"^skip_name$"
         )
     )
+    application.add_handler(
+        CallbackQueryHandler(
+            bot_handlers_extra.shipment_details_callback,
+            pattern=r"^shipment_details:"
+        )
+    )
+    application.add_handler(
+        CallbackQueryHandler(
+            bot_handlers_extra.back_to_list_callback,
+            pattern=r"^back_to_list$"
+        )
+    )
 
     # Button handler for main menu buttons (must be before message_handler)
     application.add_handler(
