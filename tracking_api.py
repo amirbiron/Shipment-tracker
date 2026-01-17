@@ -418,8 +418,13 @@ class TrackingAPI:
         if not events:
             return None, ""
         
+        # Filter out non-dict items (sometimes API returns strings)
+        events = [e for e in events if isinstance(e, dict)]
+        if not events:
+            return None, ""
+        
         # Sort by time (newest first)
-        events = sorted(events, key=lambda x: x.get('z', ''), reverse=True)
+        events = sorted(events, key=lambda x: x.get('a', '') if isinstance(x, dict) else '', reverse=True)
         latest = events[0]
         
         # Parse event
