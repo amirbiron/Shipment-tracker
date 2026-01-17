@@ -6,7 +6,7 @@ import logging
 import re
 from datetime import datetime, timedelta
 from typing import Dict, Optional
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import ContextTypes
 
 from models import Shipment, Subscription, ShipmentState, STATUS_TRANSLATIONS_HE
@@ -20,6 +20,32 @@ logger = logging.getLogger(__name__)
 _rate_limits: Dict[str, datetime] = {}
 
 
+def get_main_menu_keyboard() -> ReplyKeyboardMarkup:
+    """Create the main menu keyboard with buttons"""
+    keyboard = [
+        [
+            KeyboardButton("📦 המשלוחים שלי"),
+            KeyboardButton("➕ הוסף משלוח")
+        ],
+        [
+            KeyboardButton("🔄 רענן משלוח"),
+            KeyboardButton("📫 ארכיון")
+        ],
+        [
+            KeyboardButton("🔕 השתק התראות"),
+            KeyboardButton("🗑 הסר משלוח")
+        ],
+        [
+            KeyboardButton("❓ עזרה")
+        ]
+    ]
+    return ReplyKeyboardMarkup(
+        keyboard,
+        resize_keyboard=True,
+        one_time_keyboard=False
+    )
+
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /start command"""
     welcome_text = """
@@ -27,21 +53,25 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 📦 הבוט מאפשר לך לעקוב אחר משלוחים מכל העולם ולקבל התראות אוטומטיות.
 
-<b>פקודות זמינות:</b>
-/add - הוסף משלוח חדש למעקב
-/list - הצג רשימת משלוחים פעילים
-/archive - הצג ארכיון משלוחים שנמסרו
-/refresh - רענן משלוח ידנית
-/mute - השתק/בטל השתקת התראות
-/remove - הסר משלוח מהמעקב
-/help - הצג הודעת עזרה
-
 <b>כיצד להתחיל?</b>
-פשוט שלח מספר מעקב או השתמש בפקודה /add
+• לחץ על הכפתורים בתפריט למטה
+• או שלח מספר מעקב ישירות
+
+<b>פעולות זמינות:</b>
+📦 המשלוחים שלי - צפה במשלוחים פעילים
+➕ הוסף משלוח - הוסף משלוח חדש למעקב
+🔄 רענן משלוח - רענון ידני של סטטוס
+📫 ארכיון - צפה במשלוחים שנמסרו
+🔕 השתק התראות - נהל התראות
+🗑 הסר משלוח - הסר משלוח מהמעקב
+❓ עזרה - מידע נוסף
+
+💡 <i>אפשר גם להשתמש בפקודות: /add, /list, /refresh ועוד</i>
 """
-    
+
     await update.message.reply_text(
         welcome_text,
+        reply_markup=get_main_menu_keyboard(),
         parse_mode='HTML'
     )
 
@@ -52,19 +82,19 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 📖 <b>מדריך שימוש</b>
 
 <b>הוספת משלוח:</b>
-1. שלח מספר מעקב או /add [מספר] [שם]
+1. לחץ על "➕ הוסף משלוח" או שלח מספר מעקב ישירות
 2. אם יש מספר חברות שילוח אפשריות, בחר מהרשימה
 3. קבל עדכון מיידי על הסטטוס
 
 <b>ניהול משלוחים:</b>
-• /list - צפה בכל המשלוחים הפעילים
-• /archive - צפה במשלוחים שנמסרו
-• /refresh - רענן סטטוס ידנית (עם הגבלת זמן)
-• /remove - הסר משלוח מהמעקב
+• 📦 המשלוחים שלי - צפה בכל המשלוחים הפעילים
+• 📫 ארכיון - צפה במשלוחים שנמסרו
+• 🔄 רענן משלוח - רענן סטטוס ידנית (עם הגבלת זמן)
+• 🗑 הסר משלוח - הסר משלוח מהמעקב
 
 <b>התראות:</b>
 • תקבל התראה אוטומטית בכל שינוי סטטוס
-• השתמש ב-/mute להשתקת התראות למשלוח מסוים
+• השתמש ב-🔕 השתק התראות להשתקת התראות למשלוח מסוים
 • משלוחים שנמסרו עוברים אוטומטית לארכיון
 
 <b>מגבלות:</b>
@@ -72,11 +102,14 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 • רענון ידני: פעם ב-10 דקות
 • הוספה: 5 משלוחים לדקה
 
-יש בעיה? פנה לתמיכה או בדוק את /start
+💡 <i>ניתן גם להשתמש בפקודות טקסט: /add, /list, /refresh ועוד</i>
+
+יש בעיה? פנה לתמיכה או השתמש ב-/start
 """
-    
+
     await update.message.reply_text(
         help_text,
+        reply_markup=get_main_menu_keyboard(),
         parse_mode='HTML'
     )
 
@@ -329,7 +362,8 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not subscriptions:
         await update.message.reply_text(
             "📭 אין לך משלוחים פעילים כרגע.\n\n"
-            "השתמש ב-/add כדי להוסיף משלוח חדש.",
+            "לחץ על '➕ הוסף משלוח' או שלח מספר מעקב ישירות.",
+            reply_markup=get_main_menu_keyboard(),
             parse_mode='HTML'
         )
         return
@@ -382,6 +416,7 @@ async def archive_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "📪 אין משלוחים בארכיון.\n\n"
             "משלוחים שנמסרו יופיעו כאן.",
+            reply_markup=get_main_menu_keyboard(),
             parse_mode='HTML'
         )
         return
@@ -469,6 +504,42 @@ def _format_time_ago(dt: datetime) -> str:
         return f"לפני {days} ימים"
 
 
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Handle button presses from the main menu keyboard
+    Route to appropriate command handlers
+    """
+    if not update.message or not update.message.text:
+        return
+
+    text = update.message.text.strip()
+
+    # Map button text to handlers
+    if text == "📦 המשלוחים שלי":
+        await list_command(update, context)
+    elif text == "➕ הוסף משלוח":
+        await update.message.reply_text(
+            "📝 שלח מספר מעקב או השתמש בפורמט:\n"
+            "/add [מספר_מעקב] [שם_פריט]\n\n"
+            "דוגמה: /add RR123456789CN אוזניות\n"
+            "או פשוט שלח: RR123456789CN",
+            parse_mode='HTML'
+        )
+    elif text == "🔄 רענן משלוח":
+        from bot_handlers_extra import refresh_command
+        await refresh_command(update, context)
+    elif text == "📫 ארכיון":
+        await archive_command(update, context)
+    elif text == "🔕 השתק התראות":
+        from bot_handlers_extra import mute_command
+        await mute_command(update, context)
+    elif text == "🗑 הסר משלוח":
+        from bot_handlers_extra import remove_command
+        await remove_command(update, context)
+    elif text == "❓ עזרה":
+        await help_command(update, context)
+
+
 async def _check_rate_limit(
     user_id: int,
     action: str,
@@ -481,12 +552,12 @@ async def _check_rate_limit(
     """
     key = f"{user_id}:{action}"
     now = datetime.utcnow()
-    
+
     if key in _rate_limits:
         last_time = _rate_limits[key]
         if now - last_time < timedelta(minutes=minutes):
             # Still in cooldown
             return False
-    
+
     _rate_limits[key] = now
     return True

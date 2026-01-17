@@ -11,7 +11,7 @@ from bson import ObjectId
 from models import STATUS_TRANSLATIONS_HE
 from database import get_database
 from tracking_api import get_tracking_api, TrackingAPIError
-from bot_handlers import _check_rate_limit, _format_time_ago
+from bot_handlers import _check_rate_limit, _format_time_ago, get_main_menu_keyboard
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,8 @@ async def refresh_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not subscriptions:
         await update.message.reply_text(
             "📭 אין לך משלוחים פעילים.\n\n"
-            "השתמש ב-/add להוספת משלוח.",
+            "לחץ על '➕ הוסף משלוח' או שלח מספר מעקב ישירות.",
+            reply_markup=get_main_menu_keyboard(),
             parse_mode='HTML'
         )
         return
@@ -188,13 +189,15 @@ async def mute_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /mute command - toggle mute for a shipment"""
     user_id = update.effective_user.id
     db = await get_database()
-    
+
     # Get user's shipments
     subscriptions = await db.get_user_subscriptions(user_id)
-    
+
     if not subscriptions:
         await update.message.reply_text(
-            "📭 אין לך משלוחים פעילים.",
+            "📭 אין לך משלוחים פעילים.\n\n"
+            "לחץ על '➕ הוסף משלוח' או שלח מספר מעקב ישירות.",
+            reply_markup=get_main_menu_keyboard(),
             parse_mode='HTML'
         )
         return
@@ -247,13 +250,15 @@ async def remove_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /remove command - remove shipment tracking"""
     user_id = update.effective_user.id
     db = await get_database()
-    
+
     # Get user's subscriptions
     subscriptions = await db.get_user_subscriptions(user_id)
-    
+
     if not subscriptions:
         await update.message.reply_text(
-            "📭 אין לך משלוחים פעילים.",
+            "📭 אין לך משלוחים פעילים.\n\n"
+            "לחץ על '➕ הוסף משלוח' או שלח מספר מעקב ישירות.",
+            reply_markup=get_main_menu_keyboard(),
             parse_mode='HTML'
         )
         return
