@@ -154,16 +154,23 @@ async def _perform_refresh(update: Update, shipment, item_name: str, is_callback
             shipment.last_check_at = datetime.utcnow()
             await db.update_shipment(shipment)
             
-            # Get all events for history
-            all_events = api.parse_all_events_17track(tracking_data)
+            # Get full tracking details including carriers
+            tracking_details = api.parse_tracking_details_17track(tracking_data)
+            all_events = tracking_details.get('events', [])
+            carriers = tracking_details.get('carriers', '')
             
             # Build result message
             lines = [
                 f"📦 <b>{item_name}</b>",
                 f"מספר מעקב: <code>{shipment.tracking_number}</code>",
-                "",
-                f"<b>סטטוס:</b> {STATUS_TRANSLATIONS_HE.get(new_event.status_norm, 'לא ידוע')}",
             ]
+            
+            # Show carriers chain
+            if carriers:
+                lines.append(f"🚚 <b>חברות שילוח:</b> {carriers}")
+            
+            lines.append("")
+            lines.append(f"<b>סטטוס:</b> {STATUS_TRANSLATIONS_HE.get(new_event.status_norm, 'לא ידוע')}")
             
             if changed:
                 lines.append("🔔 <i>עדכון חדש!</i>")
@@ -172,24 +179,26 @@ async def _perform_refresh(update: Update, shipment, item_name: str, is_callback
             if all_events:
                 lines.append("")
                 lines.append("<b>📜 היסטוריית מעקב:</b>")
+                lines.append("─────────────────")
                 
-                # Show up to 10 recent events
-                for event in all_events[:10]:
+                # Show up to 15 recent events
+                for event in all_events[:15]:
                     timestamp = event.get('timestamp', '')
                     status = event.get('status', '')
                     location = event.get('location', '')
                     
-                    # Format timestamp for display
-                    time_display = timestamp[:16] if timestamp else ''  # "YYYY-MM-DD HH:MM"
+                    # Format timestamp for display (YYYY-MM-DD HH:MM)
+                    time_display = timestamp[:16] if timestamp else ''
                     
-                    if location:
-                        lines.append(f"• {time_display} - {location}")
-                        lines.append(f"  {status}")
-                    else:
-                        lines.append(f"• {time_display} - {status}")
+                    # Format: timestamp location, status
+                    loc_str = f"{location}, " if location else ""
+                    lines.append(f"📍 {time_display}")
+                    lines.append(f"    {loc_str}{status}")
                 
-                if len(all_events) > 10:
-                    lines.append(f"<i>... ועוד {len(all_events) - 10} אירועים</i>")
+                if len(all_events) > 15:
+                    lines.append(f"\n<i>... ועוד {len(all_events) - 15} אירועים</i>")
+            else:
+                lines.append("\n⚠️ לא נמצאו אירועי מעקב")
             
             await status_msg.edit_text(
                 "\n".join(lines),
