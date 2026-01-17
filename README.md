@@ -80,6 +80,10 @@ MONGODB_URI=mongodb+srv://user:pass@cluster.mongodb.net/shipment_tracker
 # Tracking API - בחר ספק
 TRACKING_PROVIDER=17track  # או trackingmore
 
+# האם לחייב מפתח Tracking API בזמן עליית האפליקציה?
+# מומלץ להשאיר true. אפשר לשים false כדי שהבוט יעלה בלי מעקב (לצרכי הקמה/דיבוג).
+TRACKING_API_REQUIRED=true
+
 # 17TRACK API (אם בחרת 17track)
 TRACKING_API_KEY=your_17track_api_key
 
@@ -253,6 +257,7 @@ LOG_LEVEL=ERROR    # שגיאות בלבד
 1. בדוק שיש לך quota זמין
 2. ודא ש-API key תקין
 3. בדוק rate limits (3 req/sec)
+4. אם הלוגים מראים ש-API key לא הוגדר, הוסף `TRACKING_API_KEY` (או `TRACKINGMORE_API_KEY` בהתאם ל-`TRACKING_PROVIDER`)
 
 ### Render deployment issues
 

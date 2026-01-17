@@ -222,6 +222,7 @@ Start Command: python main.py
 | `TELEGRAM_BOT_TOKEN` | `123456:ABC...` | מ-BotFather |
 | `MONGODB_URI` | `mongodb+srv://...` | מ-MongoDB Atlas |
 | `TRACKING_API_KEY` | `your_17track_key` | מ-17TRACK |
+| `TRACKING_API_REQUIRED` | `true` | מומלץ. אם `false` הבוט יעלה בלי פיצ'ר מעקב |
 | `ENVIRONMENT` | `production` | קבוע |
 | `LOG_LEVEL` | `INFO` | לוגים רגילים |
 | `TIMEZONE` | `Asia/Jerusalem` | או timezone שלך |
