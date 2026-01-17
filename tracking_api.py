@@ -625,6 +625,78 @@ class TrackingAPI:
         hash_str = f"{event.status_raw}|{timestamp_str}|{event.location or ''}"
         return hashlib.sha1(hash_str.encode()).hexdigest()
     
+    # Common 17track carrier codes to names mapping
+    CARRIER_CODES = {
+        "0": "Auto Detect",
+        "3": "China Post",
+        "190": "China EMS", 
+        "2151": "Cainiao",
+        "100002": "Yanwen",
+        "100003": "SunYou",
+        "7014": "4PX",
+        "9061": "Israel Post",
+        "5": "Israel Post",
+        "21051": "USPS",
+        "6": "DHL",
+        "2018": "FedEx",
+        "21037": "UPS",
+    }
+    
+    def _get_carrier_name(self, carrier_data) -> str:
+        """Extract carrier name from carrier data (could be dict, int, or string)"""
+        if not carrier_data:
+            return ""
+        
+        if isinstance(carrier_data, dict):
+            # Try to get name from dict
+            name = carrier_data.get('name', '') or carrier_data.get('_name', '')
+            if name:
+                return name
+            # If no name, try to get code and map it
+            code = str(carrier_data.get('code', '') or carrier_data.get('_code', ''))
+            if code:
+                return self.CARRIER_CODES.get(code, code)
+        
+        # If it's a number or string, try to map it
+        code_str = str(carrier_data)
+        return self.CARRIER_CODES.get(code_str, code_str if code_str != "0" else "")
+    
+    def _extract_events_from_field(self, data, field_name: str) -> List[Dict]:
+        """Extract events from a field that could be list, dict, or nested structure"""
+        events = []
+        
+        if isinstance(data, list):
+            # Direct list - check each item
+            for item in data:
+                if isinstance(item, dict):
+                    # Check if it's an event (has 'a' for timestamp or 'z' for status)
+                    if 'a' in item or 'z' in item:
+                        events.append(item)
+                    else:
+                        # Might be nested, try to extract
+                        for val in item.values():
+                            if isinstance(val, dict) and ('a' in val or 'z' in val):
+                                events.append(val)
+                            elif isinstance(val, list):
+                                events.extend(self._extract_events_from_field(val, field_name))
+        
+        elif isinstance(data, dict):
+            # Check if the dict itself is an event
+            if 'a' in data and 'z' in data:
+                events.append(data)
+            else:
+                # Try to find events in dict values
+                for key, val in data.items():
+                    if isinstance(val, dict) and ('a' in val or 'z' in val):
+                        events.append(val)
+                    elif isinstance(val, list):
+                        events.extend(self._extract_events_from_field(val, field_name))
+                    elif isinstance(val, dict):
+                        # Recurse into nested dicts
+                        events.extend(self._extract_events_from_field(val, field_name))
+        
+        return events
+    
     def parse_tracking_details_17track(self, response: Dict[str, Any]) -> Dict[str, Any]:
         """
         Parse complete tracking details from 17TRACK response.
@@ -632,15 +704,21 @@ class TrackingAPI:
         """
         track_info = response.get('track', {})
         
-        # Get carrier information
-        w1 = track_info.get('w1', {})  # Origin carrier (e.g., Cainiao, China Post)
-        w2 = track_info.get('w2', {})  # Destination carrier (e.g., Israel Post)
+        logger.info(f"track_info keys: {list(track_info.keys())}")
         
-        origin_carrier = w1.get('name', '') if isinstance(w1, dict) else str(w1) if w1 else ''
-        dest_carrier = w2.get('name', '') if isinstance(w2, dict) else str(w2) if w2 else ''
+        # Get carrier information from multiple possible sources
+        w1 = track_info.get('w1')  # Origin carrier
+        w2 = track_info.get('w2')  # Destination carrier
+        
+        # Also check is1/is2 for carrier info
+        is1 = track_info.get('is1', {})
+        is2 = track_info.get('is2', {})
+        
+        origin_carrier = self._get_carrier_name(w1) or self._get_carrier_name(is1)
+        dest_carrier = self._get_carrier_name(w2) or self._get_carrier_name(is2)
         
         # Build carrier string
-        if origin_carrier and dest_carrier:
+        if origin_carrier and dest_carrier and origin_carrier != dest_carrier:
             carriers_str = f"{origin_carrier} ➡️ {dest_carrier}"
         elif origin_carrier:
             carriers_str = origin_carrier
@@ -649,7 +727,7 @@ class TrackingAPI:
         else:
             carriers_str = "לא זוהה"
         
-        logger.info(f"Carriers: {carriers_str} (w1={w1}, w2={w2})")
+        logger.info(f"Carriers: {carriers_str} (w1={w1}, w2={w2}, is1={is1}, is2={is2})")
         
         # Get status code
         status_code = track_info.get('e', 0)  # 10=Transit, 30=Pickup, 40=Delivered
@@ -657,39 +735,34 @@ class TrackingAPI:
         # Collect ALL events from multiple sources
         all_events = []
         
-        # z1 = Origin country events (e.g., events from China)
-        # z2 = Destination country events (e.g., events from Israel)  
-        # z0 = Combined/latest events
-        # Also check ygt1, ygt2 for additional tracking info
+        # Log all available fields to understand structure
+        for key in track_info.keys():
+            val = track_info.get(key)
+            val_type = type(val).__name__
+            val_preview = ""
+            if isinstance(val, list) and len(val) > 0:
+                val_preview = f" (len={len(val)}, first={type(val[0]).__name__})"
+            elif isinstance(val, dict):
+                val_preview = f" (keys={list(val.keys())[:5]})"
+            logger.info(f"  Field '{key}': {val_type}{val_preview}")
         
-        event_fields = ['z1', 'z2', 'z0', 'ygt1', 'ygt2']
+        # Event fields to check:
+        # z0 = latest/combined events
+        # z1 = origin country events (e.g., China)
+        # z2 = destination country events (e.g., Israel)
+        # z9 = additional events
+        # ygt1, ygt2, ylt1, ylt2 = more tracking sources
+        
+        event_fields = ['z0', 'z1', 'z2', 'z9', 'ygt1', 'ygt2', 'ylt1', 'ylt2']
         
         for field in event_fields:
             events_data = track_info.get(field)
             if not events_data:
                 continue
-                
-            logger.info(f"Processing {field}: type={type(events_data)}")
             
-            if isinstance(events_data, list):
-                # Direct list of events
-                for item in events_data:
-                    if isinstance(item, dict) and ('a' in item or 'z' in item):
-                        all_events.append(item)
-            elif isinstance(events_data, dict):
-                # Dict might contain events in various ways
-                # Check if it's a single event
-                if 'a' in events_data and 'z' in events_data:
-                    all_events.append(events_data)
-                else:
-                    # Try to extract events from nested structure
-                    for key, value in events_data.items():
-                        if isinstance(value, dict) and ('a' in value or 'z' in value):
-                            all_events.append(value)
-                        elif isinstance(value, list):
-                            for item in value:
-                                if isinstance(item, dict) and ('a' in item or 'z' in item):
-                                    all_events.append(item)
+            events_found = self._extract_events_from_field(events_data, field)
+            logger.info(f"Processing {field}: type={type(events_data).__name__}, events_found={len(events_found)}")
+            all_events.extend(events_found)
         
         logger.info(f"Total events collected: {len(all_events)}")
         
