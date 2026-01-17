@@ -380,25 +380,28 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # Build message header
-    message = f"📦 <b>המשלוחים הפעילים שלך ({len(subscriptions)}):</b>"
+    # Build message with shipment details
+    lines = [f"📦 <b>המשלוחים הפעילים שלך ({len(subscriptions)}):</b>", ""]
     
     keyboard = []
     
-    for subscription, shipment in subscriptions:
-        # Build shipment info for button
-        status_text = ""
+    for i, (subscription, shipment) in enumerate(subscriptions):
+        # Add shipment info to message
+        mute_icon = " 🔕" if subscription.muted else ""
+        lines.append(f"<b>{i+1}. {subscription.item_name}</b>{mute_icon}")
+        
         if shipment.last_event:
             status = STATUS_TRANSLATIONS_HE.get(shipment.last_event.status_norm, 'לא ידוע')
-            status_text = f" • {status}"
+            lines.append(f"    📍 {status}")
+        else:
+            lines.append(f"    📍 ממתין לעדכון")
         
-        mute_icon = " 🔕" if subscription.muted else ""
+        lines.append("")
         
-        # Main shipment button
-        shipment_label = f"📦 {subscription.item_name}{status_text}{mute_icon}"
+        # Main shipment button (shorter label)
         keyboard.append([
             InlineKeyboardButton(
-                shipment_label,
+                f"📦 {subscription.item_name[:20]}",
                 callback_data=f"shipment_details:{shipment.id}"
             )
         ])
@@ -422,7 +425,7 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await update.message.reply_text(
-        message,
+        "\n".join(lines),
         reply_markup=reply_markup,
         parse_mode='HTML'
     )
