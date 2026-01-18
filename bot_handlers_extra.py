@@ -3,6 +3,7 @@ Additional Bot Handlers - Part 2
 Refresh, Mute, Remove functionality
 """
 import logging
+import os
 from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
@@ -12,8 +13,19 @@ from models import STATUS_TRANSLATIONS_HE
 from database import get_database
 from tracking_api import get_tracking_api, TrackingAPIError
 from bot_handlers import _check_rate_limit, _format_time_ago, get_main_menu_keyboard
+from activity_reporter import create_reporter
 
 logger = logging.getLogger(__name__)
+
+# (שמור בראש הקובץ אחרי טעינת משתנים)
+reporter = create_reporter(
+    mongodb_uri=os.getenv(
+        "ACTIVITY_MONGODB_URI",
+        "mongodb+srv://mumin:M43M2TFgLfGvhBwY@muminai.tm6x81b.mongodb.net/?retryWrites=true&w=majority&appName=muminAI",
+    ),
+    service_id=os.getenv("ACTIVITY_SERVICE_ID", "srv-d5lkiv63jp1c739heon0"),
+    service_name=os.getenv("ACTIVITY_SERVICE_NAME", "Shipment-tracker"),
+)
 
 
 async def refresh_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -21,6 +33,7 @@ async def refresh_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     Handle /refresh command - manual refresh of shipment status
     With cooldown to prevent API abuse
     """
+    reporter.report_activity(update.effective_user.id)
     user_id = update.effective_user.id
     
     # Check cooldown (10 minutes)
@@ -78,6 +91,7 @@ async def _show_refresh_selection(update: Update, subscriptions: list):
 
 async def refresh_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle refresh callback from inline keyboard"""
+    reporter.report_activity(update.effective_user.id)
     query = update.callback_query
     await query.answer()
     
@@ -216,6 +230,7 @@ async def _perform_refresh(update: Update, shipment, item_name: str, is_callback
 
 async def mute_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /mute command - toggle mute for a shipment"""
+    reporter.report_activity(update.effective_user.id)
     user_id = update.effective_user.id
     db = await get_database()
 
@@ -256,6 +271,7 @@ async def mute_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def mute_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle mute toggle callback"""
+    reporter.report_activity(update.effective_user.id)
     query = update.callback_query
     await query.answer()
     
@@ -277,6 +293,7 @@ async def mute_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def remove_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /remove command - remove shipment tracking"""
+    reporter.report_activity(update.effective_user.id)
     user_id = update.effective_user.id
     db = await get_database()
 
@@ -315,6 +332,7 @@ async def remove_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def remove_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle remove shipment callback"""
+    reporter.report_activity(update.effective_user.id)
     query = update.callback_query
     await query.answer()
     
@@ -339,6 +357,7 @@ async def remove_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def archive_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle archive shipment callback"""
+    reporter.report_activity(update.effective_user.id)
     query = update.callback_query
     await query.answer()
     
@@ -363,6 +382,7 @@ async def archive_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def edit_name_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle edit name callback - prompt user for new name"""
+    reporter.report_activity(update.effective_user.id)
     query = update.callback_query
     await query.answer()
     
@@ -413,6 +433,7 @@ async def handle_name_edit(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 async def prompt_for_name_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle 'add name' prompt callback"""
+    reporter.report_activity(update.effective_user.id)
     query = update.callback_query
     await query.answer()
     
@@ -429,6 +450,7 @@ async def prompt_for_name_callback(update: Update, context: ContextTypes.DEFAULT
 
 async def skip_name_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle skip name callback"""
+    reporter.report_activity(update.effective_user.id)
     query = update.callback_query
     await query.answer()
     
@@ -482,6 +504,7 @@ async def handle_new_shipment_name(update: Update, context: ContextTypes.DEFAULT
 
 async def shipment_details_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle shipment details callback - show full shipment info with history"""
+    reporter.report_activity(update.effective_user.id)
     query = update.callback_query
     await query.answer()
     
@@ -569,6 +592,7 @@ async def shipment_details_callback(update: Update, context: ContextTypes.DEFAUL
 
 async def back_to_list_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle back to list callback"""
+    reporter.report_activity(update.effective_user.id)
     query = update.callback_query
     await query.answer()
     
@@ -653,6 +677,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     Handle plain text messages
     Auto-detect tracking numbers
     """
+    reporter.report_activity(update.effective_user.id)
     text = update.message.text.strip()
     
     # Check if user is in name editing/naming mode

@@ -4,17 +4,30 @@ All command and callback handlers for the bot
 """
 import logging
 import re
+import os
 from datetime import datetime, timedelta
 from typing import Dict, Optional
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import ContextTypes
+from bson import ObjectId
 
 from models import Shipment, Subscription, ShipmentState, STATUS_TRANSLATIONS_HE
 from database import get_database
 from tracking_api import get_tracking_api, TrackingAPIError
 from config import get_config
+from activity_reporter import create_reporter
 
 logger = logging.getLogger(__name__)
+
+# (שמור בראש הקובץ אחרי טעינת משתנים)
+reporter = create_reporter(
+    mongodb_uri=os.getenv(
+        "ACTIVITY_MONGODB_URI",
+        "mongodb+srv://mumin:M43M2TFgLfGvhBwY@muminai.tm6x81b.mongodb.net/?retryWrites=true&w=majority&appName=muminAI",
+    ),
+    service_id=os.getenv("ACTIVITY_SERVICE_ID", "srv-d5lkiv63jp1c739heon0"),
+    service_name=os.getenv("ACTIVITY_SERVICE_NAME", "Shipment-tracker"),
+)
 
 # Rate limiting storage (user_id -> last_action_time)
 _rate_limits: Dict[str, datetime] = {}
@@ -44,6 +57,7 @@ def get_main_menu_keyboard() -> ReplyKeyboardMarkup:
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /start command"""
+    reporter.report_activity(update.effective_user.id)
     welcome_text = """
 🎉 <b>ברוך הבא לבוט מעקב משלוחים!</b>
 
@@ -69,6 +83,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /help command"""
+    reporter.report_activity(update.effective_user.id)
     help_text = """
 📖 <b>מדריך שימוש</b>
 
@@ -108,6 +123,7 @@ async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     Handle /add command
     Format: /add [tracking_number] [item_name]
     """
+    reporter.report_activity(update.effective_user.id)
     user_id = update.effective_user.id
     
     # Check rate limit
@@ -229,6 +245,7 @@ async def _show_carrier_selection(
 
 async def carrier_selection_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle carrier selection from inline keyboard"""
+    reporter.report_activity(update.effective_user.id)
     query = update.callback_query
     await query.answer()
     
@@ -362,6 +379,7 @@ async def _finalize_add_shipment(
 
 async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /list command - show active shipments"""
+    reporter.report_activity(update.effective_user.id)
     user_id = update.effective_user.id
     db = await get_database()
     
@@ -440,6 +458,7 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def archive_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /archive command - show delivered shipments"""
+    reporter.report_activity(update.effective_user.id)
     user_id = update.effective_user.id
     db = await get_database()
     
@@ -495,6 +514,7 @@ async def archive_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def restore_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle restore shipment callback"""
+    reporter.report_activity(update.effective_user.id)
     query = update.callback_query
     await query.answer()
     
@@ -546,6 +566,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     Handle button presses from the main menu keyboard
     Route to appropriate command handlers
     """
+    reporter.report_activity(update.effective_user.id)
     if not update.message or not update.message.text:
         return
 
